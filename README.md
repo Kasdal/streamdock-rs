@@ -355,7 +355,7 @@ and `-Target PATH` for another folder. `uninstall.ps1` removes the program. It
 keeps profiles when you pass `-KeepProfiles`.
 
 `build-nsis.ps1` builds a per-user NSIS installer from `packaging\streamdock.nsi`.
-It needs `makensis` in PATH or a portable copy with `-Makensis PATH`. The
+It needs `makensis` in PATH or a portable copy with `-MakensisPath PATH`. The
 result is `dist\StreamDock-0.2.0-setup.exe`, about 5.7 MB. The installer needs
 no administrator rights and writes an "Apps and features" entry.
 
