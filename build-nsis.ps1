@@ -1,5 +1,6 @@
 param(
-    [string]$Version = "0.2.0"
+    [string]$Version = "0.2.0",
+    [string]$Makensis = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,16 +10,26 @@ if (-not (Test-Path $source)) {
     throw "Run build-release.ps1 first: $source is missing."
 }
 
-# Find makensis in PATH, then in the usual install folders.
-$makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
-if (-not $makensis) {
-    foreach ($candidate in @(
-        "$env:ProgramFiles\NSIS\makensis.exe",
-        "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
-    )) {
-        if (Test-Path $candidate) {
-            $makensis = Get-Item $candidate
-            break
+# Find makensis: explicit path, then PATH, then the usual install folders.
+$makensis = $null
+if ($Makensis) {
+    if (-not (Test-Path $Makensis)) {
+        throw "$Makensis is missing."
+    }
+    $makensis = Get-Item $Makensis
+} else {
+    $found = Get-Command makensis.exe -ErrorAction SilentlyContinue
+    if ($found) {
+        $makensis = Get-Item $found.Source
+    } else {
+        foreach ($candidate in @(
+            "$env:ProgramFiles\NSIS\makensis.exe",
+            "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+        )) {
+            if (Test-Path $candidate) {
+                $makensis = Get-Item $candidate
+                break
+            }
         }
     }
 }
@@ -26,7 +37,8 @@ if (-not $makensis) {
 if (-not $makensis) {
     Write-Host "makensis.exe was not found."
     Write-Host "Install NSIS with: winget install NSIS.NSIS"
-    Write-Host "Then run this script again. The portable package from build-release.ps1 needs no extra tool."
+    Write-Host "Or unpack a portable NSIS and pass -Makensis PATH."
+    Write-Host "The portable package from build-release.ps1 needs no extra tool."
     exit 1
 }
 
@@ -38,3 +50,4 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "wrote $out"
 Get-Item $out | Select-Object Name, Length
+

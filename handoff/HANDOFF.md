@@ -1079,3 +1079,44 @@ Open work that this session added:
 4. HTTP actions with headers, and HTTPS through WinHTTP.
 5. A plugin manifest with a version and a capability list.
 
+## 31. Session 2 part 13: NSIS installer built and tested
+
+Date: 2026-11-01. The NSIS installer is now built and tested on this machine.
+
+How NSIS was obtained:
+
+1. `winget` and SourceForge were not usable: no elevation, and 403 responses.
+2. The electron-builder binary release `nsis-3.0.4.1.7z` was reachable on
+   GitHub. Windows `tar` (bsdtar) extracted it, so no 7-Zip install was needed.
+3. `makensis.exe` ran from `%TEMP%`, so nothing was installed.
+
+Results:
+
+| Test | Result |
+| --- | --- |
+| Build | `StreamDock-0.2.0-setup.exe`, 5.7 MB, lzma |
+| Silent install | `/S /D=<temp>` extracted 5 files plus `uninstall.exe` |
+| Autostart | Run value pointed at the temp install |
+| Start menu | `Stream Dock.lnk` created |
+| Uninstall entry | `HKCU\...\Uninstall\StreamDock`, version 0.2.0 |
+| Silent uninstall | Folder, key, Run value and shortcut removed |
+| Profiles | Kept, as intended |
+
+Design notes:
+
+1. `RequestExecutionLevel user` and `InstallDir $LOCALAPPDATA\...`, so no
+   administrator rights are needed.
+2. The installer stops `streamdockd` before it copies the files.
+3. The autostart value comes from `streamdock autostart install`, so the
+   installer and the CLI agree on one format.
+4. The installer carries the app icon and the file version keys.
+5. The uninstaller removes shortcuts, files and the registry keys, and keeps
+   the profiles. `-KeepProfiles` has no NSIS equivalent; removal always keeps
+   profiles.
+
+Open work:
+
+1. Sign `setup.exe` and both binaries before a public release.
+2. Add a command line switch to the NSIS script for autostart on or off.
+3. Offer the setup exe next to the portable zip in `dist`.
+
