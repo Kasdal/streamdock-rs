@@ -373,15 +373,94 @@ fn probe(args: &[String]) -> Result<()> {
             println!("the correct width. A frame with a cut side is too wide.");
         }
         "strip-span" => {
-            // One image that is three strip keys tall. If it fills the whole
+            // One image that is several strip keys tall. If it fills the whole
             // strip, the strip is one display.
-            let size = (80, 240);
-            let upright = tile::frame_tile(size, 2, [255, 255, 255]);
+            let width: u16 = arg_value(args, "--width")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(80);
+            let height: u16 = arg_value(args, "--height")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(240);
+            let size = (width, height);
+            let mut upright = tile::frame_tile(size, 2, [255, 255, 255]);
+            if has_flag(args, "--circle") {
+                // One circle, as tall as the image is wide. A round circle
+                // means the device draws at native size. A tall ellipse means
+                // the device stretches the image to the whole strip.
+                let w = size.0 as usize;
+                let h = size.1 as usize;
+                let cx = w as f32 / 2.0;
+                let cy = h as f32 / 2.0;
+                let radius = (w as f32 - 6.0) / 2.0;
+                for y in 0..h {
+                    for x in 0..w {
+                        let dx = x as f32 + 0.5 - cx;
+                        let dy = y as f32 + 0.5 - cy;
+                        if dx * dx + dy * dy <= radius * radius {
+                            let at = (y * w + x) * 3;
+                            upright.data[at] = 255;
+                            upright.data[at + 1] = 255;
+                            upright.data[at + 2] = 255;
+                        }
+                    }
+                }
+            }
+            if has_flag(args, "--mark") {
+                // A thick red band at the bottom. A cut image loses it, which
+                // is easier to see than a missing two pixel border.
+                let w = size.0 as usize;
+                let h = size.1 as usize;
+                let band = 16.min(h);
+                for y in (h - band)..h {
+                    for x in 0..w {
+                        let at = (y * w + x) * 3;
+                        upright.data[at] = 255;
+                        upright.data[at + 1] = 0;
+                        upright.data[at + 2] = 0;
+                    }
+                }
+            }
+            if let Some(spec) = arg_value(args, "--bands") {
+                // Bands at fixed heights, so the user can count how many are
+                // visible and tell where the display ends.
+                let parts: Vec<u16> = spec
+                    .split(':')
+                    .filter_map(|s| s.trim().parse().ok())
+                    .collect();
+                if parts.len() == 3 {
+                    let (from, step, count) = (parts[0], parts[1], parts[2]);
+                    let w = size.0 as usize;
+                    let h = size.1 as usize;
+                    let mut heights = Vec::new();
+                    for index in 0..count {
+                        let top = from as usize + index as usize * step as usize;
+                        if top + 8 > h {
+                            continue;
+                        }
+                        heights.push(top);
+                        for y in top..(top + 8) {
+                            for x in 0..w {
+                                let at = (y * w + x) * 3;
+                                upright.data[at] = 255;
+                                upright.data[at + 1] = 0;
+                                upright.data[at + 2] = 0;
+                            }
+                        }
+                    }
+                    let list: Vec<String> = heights.iter().map(|h| h.to_string()).collect();
+                    println!("red bands at {} pixels", list.join(", "));
+                }
+            }
             let rotated = image::rotate(&upright, model::ROTATION);
             let jpeg = image::encode_max(&rotated, proto::MAX_IMAGE_BYTES).map_err(Error::Message)?;
             dev.send_image_raw(model::key_id(16), &jpeg)?;
             dev.refresh()?;
-            println!("sent one {}x{} image to key 16", size.0, size.1);
+            println!(
+                "sent one {}x{} image, {} bytes, to key 16",
+                size.0,
+                size.1,
+                jpeg.len()
+            );
             println!();
             println!("If the whole side strip shows one tall frame, the strip is one");
             println!("display. If only the top part changes, it is three displays.");

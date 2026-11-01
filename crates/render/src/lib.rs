@@ -17,6 +17,7 @@ use streamdock_core::{animation, model, proto, tile};
 use streamdock_store::profile::{parse_color, ImageSpec, Key, Page, Theme};
 
 pub mod icons;
+pub mod meter;
 pub mod svg;
 pub mod text;
 

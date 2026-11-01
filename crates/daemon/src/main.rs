@@ -20,6 +20,7 @@ mod apps;
 mod painter;
 mod panel;
 mod single;
+mod system;
 mod tray;
 
 use std::io::Write;
@@ -236,6 +237,15 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     let started = Instant::now();
 
+    // The side strip shows the machine load. The first sample only primes the
+    // CPU counters, so the loop takes one before it starts drawing.
+    let mut load = system::Load::new();
+    let mut drawn: Option<system::Reading> = None;
+    let mut next_sample = Instant::now();
+    if load.gpu_missing() {
+        log("no GPU engine counters on this machine, the GPU meter shows --");
+    }
+
     loop {
         while let Ok(command) = incoming.try_recv() {
             handle_command(
@@ -261,10 +271,26 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 &mut painter,
                 &shared,
                 verbose,
+                &load,
+                &mut drawn,
             );
         }
 
         if painter.tick(&panel) {
+            busy = true;
+        }
+
+        if Instant::now() >= next_sample {
+            next_sample = Instant::now() + Duration::from_millis(system::SAMPLE_MS);
+            let reading = load.sample();
+            let worth = match drawn {
+                None => true,
+                Some(previous) => system::changed(&previous, &reading),
+            };
+            if worth {
+                draw_strip(&panel, &profile, &reading);
+                drawn = Some(reading);
+            }
             busy = true;
         }
 
@@ -315,12 +341,20 @@ fn handle_panel_event(
     painter: &mut Painter,
     shared: &Arc<ipc::Shared>,
     verbose: bool,
+    load: &system::Load,
+    drawn: &mut Option<system::Reading>,
 ) {
     match event {
         PanelEvent::Connected => {
             log("panel connected");
             shared.update(|state| state.connected = true);
             paint_page(panel, painter, profile, *page);
+            // The panel keeps no image across a power loss, so the strip needs
+            // a fresh copy even when no value moved.
+            if let Some(reading) = load.last() {
+                draw_strip(panel, profile, &reading);
+                *drawn = Some(reading);
+            }
         }
         PanelEvent::Disconnected(reason) => {
             log(format!("panel disconnected: {reason}"));
@@ -330,6 +364,19 @@ fn handle_panel_event(
         PanelEvent::Key(event) => {
             handle_key(event, profile, page, panel, painter, shared, verbose);
         }
+    }
+}
+
+/// Queue the side strip image for one reading.
+fn draw_strip(panel: &Panel, profile: &Profile, reading: &system::Reading) {
+    let palette = render::palette(&profile.theme).unwrap_or_default();
+    let size = (model::STRIP_WIDTH, model::STRIP_HEIGHT);
+
+    match system::strip_jpeg(reading, size, palette.background, palette.foreground) {
+        Ok(jpeg) => {
+            panel.key(system::STRIP_KEY, jpeg.into());
+        }
+        Err(e) => log(format!("cannot draw the side strip: {e}")),
     }
 }
 

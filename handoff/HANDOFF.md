@@ -1433,4 +1433,71 @@ Open work:
 2. The shape is physical pixels only. A change of display scale keeps the
    place, but the window keeps its physical size.
 
+## 38. Session 3 part 4: the side strip is one display, and it shows the load
+
+Date: 2026-11-01. The side strip is one display of 96 by 460 pixels, not three
+80x80 keys. It now shows CPU, GPU and memory load.
+
+### The strip size
+
+The old note said three 80x80 displays. That was wrong. The test tile draws a
+frame, so a complete frame on each segment of one screen looks like three
+small displays. The probe `strip-span` sent one tall image and showed the
+whole strip in one piece.
+
+Measured with `streamdock probe --test strip-span`, which now takes
+`--width`, `--height`, `--mark`, `--circle` and `--bands`:
+
+| Test | Result |
+| --- | --- |
+| An 80x160 image with a circle | The circle is round, so the device draws at native size |
+| An 80x240 image | Covered about 75 % of the strip |
+| Tall images, 700 and more | Squeezed to fit, no crop |
+| 96x480 | The top label is cut |
+| 96x460 | Every label fits, the strip is full |
+
+So the device draws an image at its own size, never enlarges a small one, and
+squeezes a taller one. 460 is the tallest height that keeps the text. The
+width is 96: at 80 a white seam stayed on the right, at 96 it is gone.
+
+The strip is addressed through key 16 (`0x10`). Keys 17 and 18 still exist in
+the protocol but are part of the same screen.
+
+### The meters
+
+1. `crates/daemon/src/system.rs` samples once a second, on the coordinator
+   thread. The first sample only primes the CPU counters.
+2. CPU is the delta of `GetSystemTimes`, where kernel time includes idle time.
+3. Memory is `GlobalMemoryStatusEx`: used of total physical memory.
+4. GPU is the PDH counter `\GPU Engine(*)\Utilization Percentage`. Every
+   instance is one process on one engine, so the values add up per engine and
+   the busiest engine is the figure shown.
+5. `crates/render/src/meter.rs` draws the strip: three bands, each with a
+   small name, a large percentage and a rounded bar. Colours are blue for CPU,
+   green for GPU and amber for memory, on the profile background.
+6. The daemon sends a new image only when a value moves by one point, and once
+   after a reconnect.
+7. The painter now paints keys 1 to 15 only. The strip belongs to the meters.
+
+Evidence, measured with the release build:
+
+| Test | Result |
+| --- | --- |
+| Strip content | Three bands, CPU, GPU and MEM, they move on their own |
+| GPU counter on this machine | Present, 466 instances, read in about 1.5 ms |
+| CPU value under load | 5 % idle, 22 % with four busy PowerShell processes |
+| Memory value | 42.6 % of 34.2 GB, 43.1 % under load |
+| 96x480 | Top label cut, so the image is squeezed or clipped |
+| 96x460 | Everything visible, no seam |
+
+Open work:
+
+1. The editor still shows keys 16 to 18 from the profile, not the strip image.
+   A later step can serve the meter image for the preview.
+2. The GPU figure is the busiest engine, which matches Task Manager's overall
+   GPU. A per-engine view is possible if the numbers ever look wrong.
+3. No temperatures: they need a kernel driver or administrator rights.
+4. The strip image is re-encoded on every change. At 96x460 the JPEG is about
+   7 KB, so the 10 KB rule holds.
+
 

@@ -81,7 +81,9 @@ impl Painter {
         self.running.clear();
         let mut queued = 0;
 
-        for key in 1..=model::KEY_COUNT {
+        // The side strip belongs to the system meters, so a page paints only
+        // the keys that have buttons.
+        for key in 1..=model::BUTTON_COUNT {
             let size = model::key_size(key);
 
             if let Some((path, phase_ms)) = animation_spec(page, key) {

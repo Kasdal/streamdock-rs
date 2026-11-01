@@ -36,7 +36,8 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Signed update check | verified with a local signed manifest |
 | Preloaded tools profile | verified on hardware: media, pages, Notepad |
 | Desktop window | verified: one instance, native save dialog, window place |
-| Unit tests | 175 tests, no device needed |
+| Side strip meters | verified on hardware: CPU, GPU and memory load |
+| Unit tests | 189 tests, no device needed |
 ## Device facts (measured)
 
 Model: AJAZZ AKP-153E.
@@ -99,13 +100,21 @@ The host must repeat `CONNECT` every 8 seconds.
 ## Key layout
 
 Keys 1 to 15 form a 5 by 3 grid of 96x96 pixel buttons.
-Keys 16 to 18 are three 80x80 pixel displays on the right side.
+The right side holds one tall display, 96 by 460 pixels.
 The side strip has no buttons and sends no key event.
 
 | Key | ID | Size | Button |
 | --- | --- | --- | --- |
 | 1 to 15 | `0x0D 0x0A 0x07 0x04 0x01` / `0x0E 0x0B 0x08 0x05 0x02` / `0x0F 0x0C 0x09 0x06 0x03` | 96x96 | yes |
-| 16 to 18 | `0x10 0x11 0x12` | 80x80 | no, display only |
+| 16 | `0x10` | 96x460, the whole strip | no, display only |
+| 17, 18 | `0x11 0x12` | part of the same strip | no, display only |
+
+The strip is one display, not three. An image sent to key 16 covers it. The
+device draws an image at its own size and squeezes an image that is taller
+than the strip. Measured: 480 pixels cut the top label, 460 show everything.
+
+The daemon owns the strip and draws the CPU, GPU and memory meters there. A
+page paints keys 1 to 15 only.
 
 ## Workspace
 
@@ -229,7 +238,19 @@ The panel thread drains a bounded queue for at most 40 ms, then reads keys.
 An animation frame is only a queue write, because every frame is pre-encoded.
 Key presses stay responsive while a key animates.
 
-Measured: a page switch repaints 18 keys in about 20 ms.
+Measured: a page switch repaints the page in about 20 ms.
+
+The side strip shows the machine load. Three bands carry CPU, GPU and memory,
+with a name, a percentage and a bar. The daemon samples once a second and
+writes a new image only when a value moves by one point.
+
+| Meter | Source | Notes |
+| --- | --- | --- |
+| CPU | `GetSystemTimes`, delta between two samples | whole machine |
+| GPU | PDH `\GPU Engine(*)\Utilization Percentage` | busiest engine; `--` when the machine has no such counter |
+| Memory | `GlobalMemoryStatusEx` | used of total physical memory |
+
+Every source is user mode. No administrator rights and no driver are needed.
 
 `streamdock preview --name Demo --out sheet.jpg` writes a picture of one page
 without the panel. Use it to check a profile on any machine.

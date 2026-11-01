@@ -45,6 +45,18 @@ pub const GRID_KEY_PIXELS: u16 = 96;
 /// Side of a strip key image in pixels.
 pub const STRIP_KEY_PIXELS: u16 = 80;
 
+/// Width of the side strip display in pixels.
+///
+/// Measured on the unit under test: the strip is one display, not three.
+/// Images are drawn at their own size; a taller image is squeezed to fit.
+pub const STRIP_WIDTH: u16 = 96;
+
+/// Height of the side strip display in pixels.
+///
+/// Measured: 480 cuts the top label, 460 shows every label and fills the
+/// strip.
+pub const STRIP_HEIGHT: u16 = 460;
+
 /// Key IDs in row major order. Key 1 is the top left key.
 const KEY_IDS: [u8; KEY_COUNT as usize] = [
     0x0d, 0x0a, 0x07, 0x04, 0x01, // row 0
@@ -148,5 +160,14 @@ mod tests {
         assert!(!is_button(BUTTON_COUNT + 1));
         assert!(!is_button(KEY_COUNT));
         assert!(is_valid_key(KEY_COUNT));
+    }
+
+    #[test]
+    fn the_strip_is_one_tall_display() {
+        // Trial size while the exact width is still open.
+        // Wider than one strip key, and longer than three of them.
+        assert!(STRIP_WIDTH > STRIP_KEY_PIXELS);
+        assert!(STRIP_HEIGHT > 3 * STRIP_KEY_PIXELS);
+        assert_eq!((STRIP_WIDTH, STRIP_HEIGHT), (96, 460));
     }
 }
