@@ -1,6 +1,6 @@
 param(
     [string]$Target = "$env:LOCALAPPDATA\StreamDock\bin",
-    [string]$Version = "0.3.0",
+    [string]$Version = "0.3.1",
     [switch]$NoAutostart,
     [switch]$NoShortcut
 )

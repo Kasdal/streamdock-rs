@@ -1015,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "streamdock-actions"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1025,7 +1025,7 @@ dependencies = [
 
 [[package]]
 name = "streamdock-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ed25519-dalek",
  "serde",
@@ -1040,7 +1040,7 @@ dependencies = [
 
 [[package]]
 name = "streamdock-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "gif",
  "jpeg-decoder",
@@ -1051,7 +1051,7 @@ dependencies = [
 
 [[package]]
 name = "streamdock-daemon"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde_json",
  "streamdock-actions",
@@ -1065,7 +1065,7 @@ dependencies = [
 
 [[package]]
 name = "streamdock-ipc"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "streamdock-render"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ab_glyph",
  "gif",
@@ -1087,7 +1087,7 @@ dependencies = [
 
 [[package]]
 name = "streamdock-store"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",

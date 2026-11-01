@@ -1654,4 +1654,56 @@ Open work:
 1. `streamdockd.exe` and `streamdock.exe` have no version resource. Only the
    window carries 0.3.0. Add it in the build scripts if a release needs it.
 
+## 42. Session 3 part 8: a save from the window failed with "Failed to fetch"
+
+Date: 2026-11-01. The user installed 0.3.0 and could not change a strip slot
+from the window. The button said "Failed to fetch".
+
+### Cause
+
+The daemon answers the CORS preflight for the window origin, but the list of
+allowed headers was `X-Token, Content-Type`. The page also sends `X-Rev` with
+every save, the revision that guards a stale save. A header that the preflight
+does not name makes the webview block the request, so the fetch fails before
+the daemon sees it.
+
+The browser editor never hit this: it runs on the same origin as the API, so
+there is no preflight. That is why every test up to now passed.
+
+### Fix
+
+1. `crates/ipc/src/lib.rs`: the header list is now `ALLOWED_REQUEST_HEADERS`,
+   `X-Token, Content-Type, X-Rev`.
+2. A new test `a_preflight_names_every_header_the_page_sends` fails if one of
+   the three names goes missing again.
+
+### Evidence
+
+Measured in the installed window through the WebView2 DevTools port, before
+and after the fix:
+
+| Request | Before | After |
+| --- | --- | --- |
+| `GET /api/state` with `X-Token` | 200 | 200 |
+| `POST /api/reload` with `X-Token`, `Content-Type` | 200 | 200 |
+| `PUT /api/profile` with `X-Token`, `Content-Type`, `X-Rev` | `Failed to fetch` | 400 from the validator, so the request arrived |
+
+Then the real action, slot 2:
+
+| Step | Result |
+| --- | --- |
+| Slot 2 Clock, Apply strip | `saved` |
+| Slot 2 System meter, metric CPU, Apply strip | `saved`, the profile holds `{ "type": "meter", "metric": "cpu" }` |
+
+### Version
+
+0.3.1. The fix touches the daemon, so the package and the installer were built
+again: `dist\StreamDock-0.3.1.zip` and `dist\StreamDock-0.3.1-setup.exe`,
+7917773 bytes.
+
+### Trap for the next session
+
+A route that the page calls cross-origin must not grow a new header without
+the preflight list. The test above covers the three names in use today.
+
 

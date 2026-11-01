@@ -303,6 +303,11 @@ const ALLOWED_ORIGINS: [&str; 3] = [
     "tauri://localhost",
 ];
 
+/// Headers that the editor page sends. A preflight must name every one of
+/// them, or the webview blocks the request. `X-Rev` carries the revision of a
+/// save, so a missing one here stops every save from the desktop window.
+const ALLOWED_REQUEST_HEADERS: &str = "X-Token, Content-Type, X-Rev";
+
 fn route(context: &Context, request: &Request) -> Response {
     let origin = request
         .header("origin")
@@ -314,7 +319,7 @@ fn route(context: &Context, request: &Request) -> Response {
             Some(origin) => Response::empty(204)
                 .with_header("Access-Control-Allow-Origin", &origin)
                 .with_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-                .with_header("Access-Control-Allow-Headers", "X-Token, Content-Type")
+                .with_header("Access-Control-Allow-Headers", ALLOWED_REQUEST_HEADERS)
                 .with_header("Access-Control-Max-Age", "600")
                 .with_header("Vary", "Origin"),
             None => Response::message(403, "this origin is not allowed"),
@@ -1192,6 +1197,32 @@ mod tests {
             .headers
             .iter()
             .any(|(name, _)| name == "Access-Control-Allow-Methods"));
+    }
+
+    #[test]
+    fn a_preflight_names_every_header_the_page_sends() {
+        // The desktop window sends X-Rev with a save. A missing name here
+        // makes the webview block the request with "Failed to fetch".
+        let context = context();
+        let mut request = request("OPTIONS", "/api/profile");
+        request
+            .headers
+            .push(("origin".to_string(), "http://tauri.localhost".to_string()));
+
+        let response = route(&context, &request);
+        let allowed = response
+            .headers
+            .iter()
+            .find(|(name, _)| name == "Access-Control-Allow-Headers")
+            .map(|(_, value)| value.clone())
+            .expect("the preflight names the headers");
+
+        for header in ["X-Token", "Content-Type", "X-Rev"] {
+            assert!(
+                allowed.to_ascii_lowercase().contains(&header.to_ascii_lowercase()),
+                "{header} is missing from {allowed:?}"
+            );
+        }
     }
 
     #[test]

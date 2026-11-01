@@ -38,7 +38,7 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Desktop window | verified: one instance, native save dialog, window place |
 | Side strip meters | verified on hardware: CPU, GPU and memory load |
 | Side strip editor | verified: live pane, three widgets, weather lookup |
-| Unit tests | 210 tests, no device needed |
+| Unit tests | 211 tests, no device needed |
 ## Device facts (measured)
 
 Model: AJAZZ AKP-153E.
@@ -385,7 +385,7 @@ code runs inside the daemon. Plugins live in `<profiles>\plugins\<id>`.
 downloads nothing.
 
 ```json
-{ "version": "0.3.0", "url": "https://example/StreamDock-0.3.0.zip",
+{ "version": "0.3.0", "url": "https://example/StreamDock-0.3.1.zip",
   "sha256": "…", "notes": "Faster paint" }
 ```
 
@@ -451,7 +451,7 @@ portable package plus a zip under `dist\`.
 
 ```powershell
 .\build-release.ps1
-.\dist\StreamDock-0.3.0\install.ps1
+.\dist\StreamDock-0.3.1\install.ps1
 ```
 
 `install.ps1` copies the program to `%LOCALAPPDATA%\StreamDock\bin`, adds the
@@ -462,12 +462,12 @@ keeps profiles when you pass `-KeepProfiles`.
 
 `build-nsis.ps1` builds a per-user NSIS installer from `packaging\streamdock.nsi`.
 It needs `makensis` in PATH or a portable copy with `-MakensisPath PATH`. The
-result is `dist\StreamDock-0.3.0-setup.exe`, about 7.9 MB. The installer needs
+result is `dist\StreamDock-0.3.1-setup.exe`, about 7.9 MB. The installer needs
 no administrator rights and writes an "Apps and features" entry.
 
 ```powershell
 .\build-nsis.ps1
-.\dist\StreamDock-0.3.0-setup.exe
+.\dist\StreamDock-0.3.1-setup.exe
 ```
 
 `sign.ps1` signs both binaries with `signtool`. Set `STREAMDOCK_CERT` to a
