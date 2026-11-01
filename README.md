@@ -16,7 +16,8 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Image rotation | measured on hardware: 270 degrees |
 | Reconnect after unplug | verified on hardware |
 | Daemon with actions | verified on hardware: page switch, repaint |
-| Unit tests | 101 tests, no device needed |
+| Browser editor | verified on hardware: edit a key, panel updates |
+| Unit tests | 114 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -96,6 +97,7 @@ The side strip has no buttons and sends no key event.
 | `crates/store` | profile model and JSON store (`streamdock-store`) |
 | `crates/render` | key tile renderer: colour, text, image files (`streamdock-render`) |
 | `crates/actions` | hotkey, text, media, launch, multi actions (`streamdock-actions`) |
+| `crates/ipc` | loopback HTTP server, token, editor page (`streamdock-ipc`) |
 | `crates/daemon` | the `streamdockd` binary |
 | `crates/cli` | the `streamdock` binary |
 | `handoff/HANDOFF.md` | session record and the product plan |
@@ -135,6 +137,19 @@ streamdockd --profile Demo
 | `--dir PATH` | profile folder, default `%LOCALAPPDATA%\StreamDock\profiles` |
 | `--seconds N` | stop after N seconds |
 | `--no-blank` | keep the keys on exit |
+| `--verbose` | log every input report |
+| `--no-ui` | do not start the editor server |
+
+The daemon prints the editor URL at start. `streamdock ui` opens it in the
+default browser. The port is random, and the token is in
+`%LOCALAPPDATA%\StreamDock\runtime.json`.
+
+The editor is one HTML page with a key grid and a key editor. Apply a key and
+the panel changes within a second. The page needs no build step and no extra
+runtime.
+
+The socket binds to `127.0.0.1` only. Every request needs the token.
+A second daemon exits, because a named mutex guards the device.
 
 The daemon does these steps:
 
@@ -217,6 +232,7 @@ streamdock.exe probe --test strip-size|strip-span|image-limit
 streamdock.exe bench --count 30
 streamdock.exe profile <list|init|demo|show|validate> [--name N]
 streamdock.exe preview [--name N] [--page N] [--out FILE]
+streamdock.exe ui
 streamdock.exe send --hex 4352540000444953 --i-understand
 ```
 
@@ -240,6 +256,7 @@ streamdock.exe send --hex 4352540000444953 --i-understand
 * `profile` lists, creates, shows and validates profiles. `profile demo`
   writes a two page profile for a daemon test.
 * `preview` writes a picture of one page as a JPEG, without the panel.
+* `ui` opens the editor of the running daemon in the default browser.
 * `send` writes one raw payload. It refuses to write without `--i-understand`.
 
 ## Limits
@@ -247,8 +264,8 @@ streamdock.exe send --hex 4352540000444953 --i-understand
 The key IDs of keys 1 to 15 match the reports that this unit sends.
 The side strip has no buttons, so keys 16 to 18 never send a key event.
 
-Hotkey and text injection use `SendInput`. The key names and the input records
-are unit tested, but no application has confirmed the injected input yet.
+Hotkey, text and launch actions are verified on hardware: text typed into
+Notepad, `ctrl+a` selected it, and `notepad.exe` opened from a key.
 
 A `command` action runs a program. A profile that holds one is user data, so
 the daemon does not ask for confirmation yet. Do this before a release.

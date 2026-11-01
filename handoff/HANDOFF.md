@@ -190,7 +190,10 @@ orientation, no mirroring.
 | `crates/store/src/file_store.rs` | One JSON file per profile, atomic save |
 | `crates/render/src/lib.rs` | Key tiles from a profile, contact sheet |
 | `crates/actions/src/lib.rs` | Hotkey, text, media, launch, multi, page actions |
-| `crates/daemon/src/main.rs` | `streamdockd`: paint, poll, act, repaint |
+| `crates/ipc/src/lib.rs` | Loopback HTTP server, token, shared state, commands |
+| `crates/ipc/src/http.rs` | Bounded HTTP request parse and response write |
+| `crates/ipc/src/ui.html` | The editor page |
+| `crates/daemon/src/main.rs` | `streamdockd`: paint, poll, act, repaint, serve the editor |
 | `crates/daemon/src/single.rs` | Named mutex, one daemon per machine |
 | `crates/cli/src/main.rs` | Command line and command handlers |
 
@@ -499,6 +502,7 @@ Measured requirement: rotate by 270 degrees at the end, not at the start.
 | M0 (done) | Protocol, CLI, hardware verification | Keys, images, brightness tested |
 | M1 (done) | Split into `crates/core`, add reconnect and hot plug, add unit tests | Unplug and replug recovers with no restart |
 | M2 (done without IPC) | Daemon, profile store, action engine for hotkey, text, launch, multi | Keys act while the UI is closed |
+| M3 (part done) | Key grid, key editor, live preview in a browser page | A user builds a 15 key page without a CLI |
 | M3 | Tauri UI with grid, key editor, drag and drop, live preview | A user builds a 15 key page without a CLI |
 | M4 | Renderer with text, SVG, GIF, icon crop, themes, import and export | A page with icons and one animation runs |
 | M5 | Per application profiles, HTTP actions, plugin host | A profile switches when the user changes application |
@@ -624,8 +628,10 @@ Design decisions:
 
 Open work that this session added:
 
-1. Test hotkey and text injection in a real application. The key names and the
-   input records are unit tested only.
+1. ~~Test hotkey and text injection in a real application.~~ Closed. Notepad
+   showed the typed text, `ctrl+a` selected it, and a key launch opened
+   Notepad. One press in the first test was not logged, so a press can be
+   lost while the daemon paints. A worker thread fixes this.
 2. Add the IPC channel: loopback socket, token file, JSON events and commands.
 3. Add a tray icon and autostart. Both belong to the daemon.
 4. Cache encoded tiles by the hash of the key description. A repaint now
@@ -635,4 +641,67 @@ Open work that this session added:
 6. Send `CONNECT` on a timer even while the daemon paints. A long repaint
    blocks the poll loop, but 18 keys take 235 ms, so this is not a problem
    today. An animation will need a worker thread.
+
+## 21. Session 2 part 3: IPC server and browser editor
+
+Date: 2026-11-01. This session added the `streamdock-ipc` crate and an editor
+page. The editor is a normal web page, not a Tauri window.
+
+Why a web page first:
+
+1. Tauri 2 on Windows usually needs the MSVC toolchain. This machine has the
+   GNU toolchain only, so a Tauri build is a risk with no gain yet.
+2. The page is one HTML file with no build step and no runtime.
+3. The same page can go into a Tauri shell later, when the toolchain exists.
+4. The daemon already owns the device and the store, so the page needs only a
+   small HTTP API.
+
+Measured on hardware:
+
+| Test | Result |
+| --- | --- |
+| Daemon starts the server | Prints the URL, writes `runtime.json` |
+| `GET /api/state` | Profile, page, connection and brightness |
+| Page switch over HTTP | Panel repaints the other page |
+| Brightness over HTTP | Panel dims |
+| Save a key over HTTP | Profile written to disk, panel repaints |
+| Request without the token | 401 |
+| Editor page in the browser | Grid and editor shown |
+| Edit a key in the page | Panel shows the new label within a second |
+
+API:
+
+| Method | Path | Body |
+| --- | --- | --- |
+| GET | `/` | token in the query, serves the page |
+| GET | `/api/state` | none |
+| PUT | `/api/profile` | the whole profile as JSON |
+| POST | `/api/page` | `{"name": "Main"}` or `{"index": 0}` |
+| POST | `/api/brightness` | `{"value": 70}` |
+| POST | `/api/reload` | `{}` |
+
+Rules:
+
+1. The listener binds `127.0.0.1` with port 0, so the port is random.
+2. The token is 32 hex characters in `%LOCALAPPDATA%\StreamDock\runtime.json`.
+3. The page needs the token in the query, the API needs it in `X-Token`.
+4. A connection serves one request and closes.
+5. The body is limited to 1 MiB and the header to 64 KiB.
+6. Only the daemon thread touches the device. The server sends a command and
+   waits up to 5 seconds for the answer.
+7. A save replaces the whole profile. The store validates it before the write.
+8. A save never leaves a half written file, because the store uses a temp file
+   and a rename.
+
+Open work for the editor:
+
+1. Drag and drop an image file onto a key.
+2. Draw the real tile in the browser, not an approximation.
+3. Undo, and a warning when a second client saves over a change.
+4. Show the render fault of a key in the grid.
+5. Add the strip key names to the grid labels.
+6. Keep the last known state when the daemon is offline, instead of a blank
+   grid.
+7. Add the tray icon and autostart to the daemon.
+8. Wrap the page in Tauri when the MSVC toolchain is available.
 

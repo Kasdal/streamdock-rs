@@ -43,6 +43,7 @@ fn usage() {
     eprintln!("  bench [--count N] [--key 1..18]");
     eprintln!("  profile <list|init|demo|show|validate> [--name N] [--dir PATH]");
     eprintln!("  preview [--name N] [--page N] [--out FILE] [--dir PATH]");
+    eprintln!("  ui");
     eprintln!("  send --hex 4352540000444953 --i-understand");
 }
 
@@ -90,6 +91,7 @@ fn main() {
         "bench" => bench(&args),
         "profile" => profile_cmd(&args),
         "preview" => preview(&args),
+        "ui" => ui(),
         "send" => send(&args),
         "-h" | "--help" | "help" => {
             usage();
@@ -713,6 +715,33 @@ fn preview(args: &[String]) -> Result<()> {
         sheet.height,
         jpeg.len()
     );
+    Ok(())
+}
+
+/// Open the editor of the running daemon in the default browser.
+fn ui() -> Result<()> {
+    let path = streamdock_ipc::runtime_path();
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        Error::Message(format!(
+            "cannot read {}: {e}. Is streamdockd running?",
+            path.display()
+        ))
+    })?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| Error::Message(format!("bad runtime file: {e}")))?;
+
+    let port = value
+        .get("port")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| Error::Message("the runtime file has no port".into()))?;
+    let token = value
+        .get("token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| Error::Message("the runtime file has no token".into()))?;
+
+    let url = format!("http://127.0.0.1:{port}/?token={token}");
+    streamdock_actions::launch(&url).map_err(|e| Error::Message(e.to_string()))?;
+    println!("opened {url}");
     Ok(())
 }
 

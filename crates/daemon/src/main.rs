@@ -4,7 +4,7 @@
 //! actions of the pressed keys, and repaints after a reconnect.
 //!
 //! Usage:
-//!   streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank]
+//!   streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank] [--verbose]
 //!
 //! The keys keep working when no window is open, because there is no window.
 
@@ -12,12 +12,13 @@ mod single;
 
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use streamdock_actions::Effect;
 use streamdock_core::model;
 use streamdock_core::session::{Session, SessionPoll};
+use streamdock_ipc as ipc;
 use streamdock_render as render;
 use streamdock_store::profile::Profile;
 use streamdock_store::Store;
@@ -58,12 +59,14 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!("streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank]");
+        println!("streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank] [--verbose] [--no-ui]");
         println!();
         println!("  --profile NAME  profile to load, default Default");
         println!("  --dir PATH      profile folder, default %LOCALAPPDATA%\\StreamDock\\profiles");
         println!("  --seconds N     stop after N seconds, default run until Ctrl+C");
         println!("  --no-blank      keep the keys on exit instead of clearing them");
+        println!("  --verbose       log every input report");
+        println!("  --no-ui         do not start the editor server");
         return ExitCode::SUCCESS;
     }
 
@@ -88,11 +91,12 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let blank_on_exit = !args.iter().any(|a| a == "--no-blank");
+    let verbose = args.iter().any(|a| a == "--verbose");
 
     let _guard = SingleInstance::acquire(single::MUTEX_NAME)?;
 
     let store = Store::new(&dir);
-    let profile = store.load_or_create(&profile_name)?;
+    let mut profile = store.load_or_create(&profile_name)?;
     let pid = profile.device.product_id().unwrap_or(model::PID);
 
     log(format!(
@@ -104,9 +108,38 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut session = Session::new(pid);
     let mut page = 0usize;
+
+    // The editor talks to the daemon through this channel. Only this thread
+    // touches the device, so a save cannot race with a paint.
+    let shared = ipc::Shared::new(ipc::State::new(profile.clone(), page));
+    let (commands, incoming) = mpsc::channel::<ipc::Command>();
+    if !args.iter().any(|a| a == "--no-ui") {
+        match ipc::Server::start(Arc::clone(&shared), commands) {
+            Ok(server) => {
+                match server.write_runtime_file() {
+                    Ok(path) => log(format!("runtime file {}", path.display())),
+                    Err(e) => log(format!("cannot write the runtime file: {e}")),
+                }
+                log(format!("editor {}", server.url()));
+            }
+            Err(e) => log(format!("cannot start the editor server: {e}")),
+        }
+    }
+
     let started = Instant::now();
 
     loop {
+        while let Ok(command) = incoming.try_recv() {
+            handle_command(
+                command,
+                &mut profile,
+                &mut page,
+                &mut session,
+                &store,
+                &shared,
+            );
+        }
+
         if shutdown_requested() {
             log("shutdown requested");
             break;
@@ -119,6 +152,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         match session.poll(Duration::from_millis(200)) {
             SessionPoll::Connected => {
                 log("panel connected");
+                shared.update(|state| state.connected = true);
                 paint_all(&mut session, &profile, page);
             }
             SessionPoll::Disconnected => {
@@ -127,8 +161,15 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                     None => "not present".to_string(),
                 };
                 log(format!("panel disconnected: {reason}"));
+                shared.update(|state| state.connected = false);
             }
             SessionPoll::Event(event) => {
+                if verbose {
+                    log(format!(
+                        "report: key id 0x{:02X} pressed={}",
+                        event.key, event.pressed
+                    ));
+                }
                 if !event.pressed {
                     continue;
                 }
@@ -143,9 +184,17 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
                 let actions = match profile.pages[page].key(number) {
                     Some(config) => config.actions.clone(),
-                    None => continue,
+                    None => {
+                        if verbose {
+                            log(format!("key {number} has no configuration"));
+                        }
+                        continue;
+                    }
                 };
                 if actions.is_empty() {
+                    if verbose {
+                        log(format!("key {number} has no actions"));
+                    }
                     continue;
                 }
 
@@ -158,7 +207,10 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                     Ok(Effect::None) => {}
                     Ok(Effect::SetBrightness(value)) => {
                         match session.with_device(|dev| dev.set_brightness(value)) {
-                            Ok(()) => log(format!("brightness {value}")),
+                            Ok(()) => {
+                                log(format!("brightness {value}"));
+                                shared.update(|state| state.brightness = Some(value));
+                            }
                             Err(e) => log(format!("brightness failed: {e}")),
                         }
                     }
@@ -166,6 +218,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                         Some(index) if index != page => {
                             page = index;
                             log(format!("page {}", profile.pages[page].name));
+                            shared.update(|state| state.set_page(index));
                             paint_all(&mut session, &profile, page);
                         }
                         Some(_) => {}
@@ -186,6 +239,83 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// Apply one editor command. Only the daemon thread calls this, so the device
+/// handle stays with one owner.
+fn handle_command(
+    command: ipc::Command,
+    profile: &mut Profile,
+    page: &mut usize,
+    session: &mut Session,
+    store: &Store,
+    shared: &Arc<ipc::Shared>,
+) {
+    match command {
+        ipc::Command::Save { profile: next, reply } => {
+            if let Err(e) = next.validate() {
+                let _ = reply.send(Err(e));
+                return;
+            }
+            if let Err(e) = store.save(&next) {
+                let _ = reply.send(Err(e.to_string()));
+                return;
+            }
+            *profile = next;
+            if *page >= profile.pages.len() {
+                *page = profile.pages.len().saturating_sub(1);
+            }
+            log(format!("profile saved by the editor, page {}", profile.pages[*page].name));
+            paint_all(session, profile, *page);
+            shared.update(|state| {
+                state.set_profile(profile.clone());
+                state.set_page(*page);
+            });
+            let _ = reply.send(Ok(shared.snapshot()));
+        }
+        ipc::Command::SwitchPage { target, reply } => match profile.page_index(&target) {
+            Some(index) => {
+                *page = index;
+                log(format!("page {} from the editor", profile.pages[index].name));
+                paint_all(session, profile, *page);
+                shared.update(|state| state.set_page(index));
+                let _ = reply.send(Ok(shared.snapshot()));
+            }
+            None => {
+                let _ = reply.send(Err(format!("no page named {target:?}")));
+            }
+        },
+        ipc::Command::Brightness { value, reply } => {
+            match session.with_device(|dev| dev.set_brightness(value)) {
+                Ok(()) => {
+                    log(format!("brightness {value} from the editor"));
+                    shared.update(|state| state.brightness = Some(value));
+                    let _ = reply.send(Ok(shared.snapshot()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ipc::Command::Reload { reply } => match store.load(&profile.name) {
+            Ok(next) => {
+                *profile = next;
+                if *page >= profile.pages.len() {
+                    *page = 0;
+                }
+                log(format!("profile reloaded, page {}", profile.pages[*page].name));
+                paint_all(session, profile, *page);
+                shared.update(|state| {
+                    state.set_profile(profile.clone());
+                    state.set_page(*page);
+                });
+                let _ = reply.send(Ok(shared.snapshot()));
+            }
+            Err(e) => {
+                let _ = reply.send(Err(e.to_string()));
+            }
+        },
+    }
 }
 
 /// Paint every key of one page.

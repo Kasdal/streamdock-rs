@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream Dock</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f26;
+    --line: #2c313b;
+    --text: #e8eaf0;
+    --dim: #98a0b0;
+    --accent: #3f8cff;
+    --ok: #3ecf7a;
+    --bad: #ef5b5b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    padding: 12px 18px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .04em; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
+  .dot.on { background: var(--ok); }
+  .grow { flex: 1; }
+  main { display: grid; grid-template-columns: minmax(420px, 1fr) 340px; gap: 18px; padding: 18px; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tabs button { background: var(--panel); color: var(--dim); border: 1px solid var(--line); }
+  .tabs button.active { color: var(--text); border-color: var(--accent); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 0.8fr);
+    gap: 8px;
+    max-width: 620px;
+  }
+  .key {
+    position: relative;
+    aspect-ratio: 1;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-weight: 700;
+    font-size: 15px;
+    cursor: pointer;
+    overflow: hidden;
+    padding: 4px;
+    color: #fff;
+  }
+  .key.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .key .num { position: absolute; top: 3px; left: 5px; font-size: 9px; font-weight: 400; opacity: .65; }
+  .key .kind { position: absolute; bottom: 3px; right: 5px; font-size: 9px; font-weight: 400; opacity: .65; }
+  .strip { border-radius: 10px; }
+  aside {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+    align-self: start;
+    position: sticky;
+    top: 18px;
+  }
+  aside h2 { font-size: 14px; margin: 0 0 12px; }
+  label { display: block; margin-bottom: 10px; color: var(--dim); font-size: 12px; }
+  input[type=text], select, textarea {
+    width: 100%;
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: #12141a;
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font: inherit;
+  }
+  textarea { font-family: Consolas, monospace; font-size: 12px; resize: vertical; }
+  input[type=color] { width: 100%; height: 28px; margin-top: 4px; background: none; border: 1px solid var(--line); border-radius: 6px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button {
+    padding: 7px 12px;
+    border-radius: 7px;
+    border: 1px solid var(--line);
+    background: #232833;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06101f; font-weight: 700; }
+  .buttons { display: flex; gap: 8px; margin-top: 4px; }
+  .hint { color: var(--dim); font-size: 12px; }
+  #message { min-height: 18px; font-size: 12px; margin: 8px 0 0; }
+  #message.bad { color: var(--bad); }
+  #message.ok { color: var(--ok); }
+  .brightness { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 12px; }
+  input[type=range] { accent-color: var(--accent); }
+  .hidden { display: none; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } aside { position: static; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>STREAM DOCK</h1>
+  <span id="status" class="dot" title="panel"></span>
+  <span id="status-text">not connected</span>
+  <span class="grow"></span>
+  <span class="brightness">
+    <label for="brightness" style="margin:0">brightness</label>
+    <input id="brightness" type="range" min="0" max="100" value="60" style="width:140px">
+    <span id="brightness-value">60</span>
+  </span>
+  <button id="reload">Reload profile</button>
+</header>
+
+<main>
+  <section>
+    <div id="tabs" class="tabs"></div>
+    <div id="grid" class="grid"></div>
+    <div class="buttons" style="margin-top:12px">
+      <button id="page-add">Add page</button>
+      <button id="page-rename">Rename page</button>
+      <button id="page-delete">Delete page</button>
+    </div>
+    <p class="hint">Click a key to edit it. The panel updates when you apply the key.</p>
+  </section>
+
+  <aside>
+    <h2 id="editor-title">Key 1</h2>
+
+    <label>Label
+      <input id="f-label" type="text" maxlength="64" placeholder="shown when no image is set">
+    </label>
+
+    <label>Image
+      <select id="f-kind">
+        <option value="none">none, label only</option>
+        <option value="color">one colour</option>
+        <option value="text">text</option>
+        <option value="file">image file</option>
+        <option value="icon">icon name, M4</option>
+      </select>
+    </label>
+
+    <div id="f-text-row">
+      <label>Text <input id="f-text" type="text" maxlength="64"></label>
+      <div class="row">
+        <label>Background <input id="f-bg" type="color" value="#202020"></label>
+        <label>Foreground <input id="f-fg" type="color" value="#f0f0f0"></label>
+      </div>
+    </div>
+
+    <div id="f-file-row" class="hidden">
+      <label>File path <input id="f-path" type="text" placeholder="C:\pictures\logo.jpg"></label>
+    </div>
+
+    <div id="f-icon-row" class="hidden">
+      <label>Icon name <input id="f-icon" type="text" placeholder="mic-off"></label>
+    </div>
+
+    <div id="f-color-row" class="hidden">
+      <label>Colour <input id="f-color" type="color" value="#202020"></label>
+    </div>
+
+    <label>Actions, JSON
+      <textarea id="f-actions" rows="9" spellcheck="false"></textarea>
+    </label>
+    <p class="hint">types: hotkey, text, media, launch, multi, page, brightness, command</p>
+
+    <div class="buttons">
+      <button id="apply" class="primary">Apply key</button>
+      <button id="clear">Clear key</button>
+    </div>
+    <p id="message"></p>
+  </aside>
+</main>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get("token") || "";
+const KEY_COUNT = 18;
+const GRID_KEYS = 15;
+
+let state = null;
+let selected = 1;
+
+const $ = (id) => document.getElementById(id);
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      "X-Token": TOKEN,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  const text = await response.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = { error: text }; }
+  if (!response.ok) {
+    throw new Error(data && data.error ? data.error : response.statusText);
+  }
+  return data;
+}
+
+function currentPage() {
+  if (!state || !state.profile.pages[state.page]) return null;
+  return state.profile.pages[state.page];
+}
+
+function keyConfig(key) {
+  const page = currentPage();
+  if (!page) return null;
+  return page.keys[String(key)] || null;
+}
+
+function colour(value, fallback) {
+  if (typeof value === "string" && /^#?[0-9a-fA-F]{3,8}$/.test(value.trim())) {
+    return value.startsWith("#") ? value : "#" + value;
+  }
+  return fallback;
+}
+
+function message(text, kind) {
+  const box = $("message");
+  box.textContent = text || "";
+  box.className = kind || "";
+}
+
+function drawGrid() {
+  const grid = $("grid");
+  grid.innerHTML = "";
+  const page = currentPage();
+  if (!page) return;
+
+  for (let key = 1; key <= KEY_COUNT; key++) {
+    const config = page.keys[String(key)] || {};
+    const cell = document.createElement("div");
+    cell.className = "key" + (key === selected ? " selected" : "");
+    cell.style.gridColumn = key <= GRID_KEYS ? String(((key - 1) % 5) + 1) : "6";
+    cell.style.gridRow = key <= GRID_KEYS ? String(Math.floor((key - 1) / 5) + 1) : String(key - GRID_KEYS);
+
+    const image = config.image || null;
+    let background = "#202020";
+    let label = config.label || "";
+    let kind = "";
+
+    if (image) {
+      kind = image.kind || "";
+      if (image.kind === "color") background = colour(image.color, background);
+      if (image.kind === "text") {
+        background = colour(image.background, background);
+        label = image.text || "";
+      }
+      if (image.kind === "icon") {
+        background = colour(image.background, background);
+        label = image.name || "";
+      }
+      if (image.kind === "file") {
+        label = "IMAGE";
+        background = "#242a36";
+      }
+    }
+
+    cell.style.background = background;
+    cell.innerHTML = "";
+    const number = document.createElement("span");
+    number.className = "num";
+    number.textContent = String(key);
+    cell.appendChild(number);
+
+    const text = document.createElement("span");
+    text.textContent = label;
+    cell.appendChild(text);
+
+    if (kind) {
+      const badge = document.createElement("span");
+      badge.className = "kind";
+      badge.textContent = kind;
+      cell.appendChild(badge);
+    }
+
+    cell.addEventListener("click", () => {
+      selected = key;
+      drawGrid();
+      fillEditor();
+    });
+    grid.appendChild(cell);
+  }
+}
+
+function drawTabs() {
+  const tabs = $("tabs");
+  tabs.innerHTML = "";
+  if (!state) return;
+  state.profile.pages.forEach((page, index) => {
+    const button = document.createElement("button");
+    button.textContent = page.name;
+    if (index === state.page) button.className = "active";
+    button.addEventListener("click", () => switchPage(index));
+    tabs.appendChild(button);
+  });
+}
+
+function fillEditor() {
+  $("editor-title").textContent = "Key " + selected;
+  const config = keyConfig(selected) || {};
+  const image = config.image || null;
+
+  $("f-label").value = config.label || "";
+  $("f-kind").value = image ? image.kind : "none";
+  $("f-text").value = image && image.kind === "text" ? image.text || "" : "";
+  $("f-bg").value = colour(image && image.background, "#202020");
+  $("f-fg").value = colour(image && image.foreground, "#f0f0f0");
+  $("f-color").value = colour(image && image.color, "#202020");
+  $("f-path").value = image && image.kind === "file" ? image.path || "" : "";
+  $("f-icon").value = image && image.kind === "icon" ? image.name || "" : "";
+  $("f-actions").value = JSON.stringify(config.actions || [], null, 2);
+  updateKindRows();
+  message("");
+}
+
+function updateKindRows() {
+  const kind = $("f-kind").value;
+  $("f-text-row").classList.toggle("hidden", kind !== "text");
+  $("f-file-row").classList.toggle("hidden", kind !== "file");
+  $("f-icon-row").classList.toggle("hidden", kind !== "icon");
+  $("f-color-row").classList.toggle("hidden", kind !== "color");
+}
+
+function buildImage() {
+  const kind = $("f-kind").value;
+  if (kind === "none") return null;
+  if (kind === "color") return { kind: "color", color: $("f-color").value };
+  if (kind === "text") {
+    return {
+      kind: "text",
+      text: $("f-text").value,
+      background: $("f-bg").value,
+      foreground: $("f-fg").value,
+    };
+  }
+  if (kind === "file") return { kind: "file", path: $("f-path").value };
+  return { kind: "icon", name: $("f-icon").value, background: $("f-bg").value };
+}
+
+function copyProfile() {
+  return JSON.parse(JSON.stringify(state.profile));
+}
+
+async function saveProfile(profile, note) {
+  const next = await api("/api/profile", { method: "PUT", body: JSON.stringify(profile) });
+  state = next;
+  drawTabs();
+  drawGrid();
+  message(note || "saved", "ok");
+}
+
+async function applyKey() {
+  try {
+    let actions;
+    try { actions = JSON.parse($("f-actions").value || "[]"); }
+    catch (e) { throw new Error("actions are not valid JSON: " + e.message); }
+    if (!Array.isArray(actions)) throw new Error("actions must be a JSON array");
+
+    const profile = copyProfile();
+    const page = profile.pages[state.page];
+    const key = String(selected);
+    const label = $("f-label").value.trim();
+    const image = buildImage();
+
+    if (!label && !image && actions.length === 0) {
+      delete page.keys[key];
+    } else {
+      const config = {};
+      if (label) config.label = label;
+      if (image) config.image = image;
+      if (actions.length) config.actions = actions;
+      page.keys[key] = config;
+    }
+    await saveProfile(profile, "key " + selected + " saved");
+  } catch (e) {
+    message(e.message, "bad");
+  }
+}
+
+async function clearKey() {
+  try {
+    const profile = copyProfile();
+    delete profile.pages[state.page].keys[String(selected)];
+    await saveProfile(profile, "key " + selected + " cleared");
+    fillEditor();
+  } catch (e) {
+    message(e.message, "bad");
+  }
+}
+
+async function switchPage(index) {
+  try {
+    state = await api("/api/page", { method: "POST", body: JSON.stringify({ index }) });
+    drawTabs();
+    drawGrid();
+    selected = 1;
+    fillEditor();
+  } catch (e) {
+    message(e.message, "bad");
+  }
+}
+
+async function refresh() {
+  try {
+    const next = await api("/api/state");
+    const pageChanged = !state || next.page !== state.page;
+    state = next;
+    $("status").classList.toggle("on", state.connected);
+    $("status-text").textContent = state.connected ? "panel connected" : "panel not connected";
+    if (pageChanged) {
+      drawTabs();
+      drawGrid();
+      fillEditor();
+    } else {
+      drawTabs();
+      drawGrid();
+    }
+  } catch (e) {
+    $("status").classList.remove("on");
+    $("status-text").textContent = "daemon offline";
+  }
+}
+
+async function setBrightness(value) {
+  $("brightness-value").textContent = value;
+  try {
+    state = await api("/api/brightness", { method: "POST", body: JSON.stringify({ value: Number(value) }) });
+  } catch (e) {
+    message(e.message, "bad");
+  }
+}
+
+async function addPage() {
+  const name = prompt("New page name", "Page " + (state.profile.pages.length + 1));
+  if (!name) return;
+  try {
+    const profile = copyProfile();
+    if (profile.pages.some((p) => p.name === name)) throw new Error("a page with that name exists");
+    profile.pages.push({ name, keys: {} });
+    await saveProfile(profile, "page added");
+  } catch (e) { message(e.message, "bad"); }
+}
+
+async function renamePage() {
+  const page = currentPage();
+  if (!page) return;
+  const name = prompt("Page name", page.name);
+  if (!name || name === page.name) return;
+  try {
+    const profile = copyProfile();
+    if (profile.pages.some((p) => p.name === name)) throw new Error("a page with that name exists");
+    profile.pages[state.page].name = name;
+    await saveProfile(profile, "page renamed");
+  } catch (e) { message(e.message, "bad"); }
+}
+
+async function deletePage() {
+  const page = currentPage();
+  if (!page) return;
+  if (state.profile.pages.length <= 1) { message("a profile needs one page", "bad"); return; }
+  if (!confirm("Delete page " + page.name + "?")) return;
+  try {
+    const profile = copyProfile();
+    profile.pages.splice(state.page, 1);
+    await saveProfile(profile, "page deleted");
+    fillEditor();
+  } catch (e) { message(e.message, "bad"); }
+}
+
+async function reloadProfile() {
+  try {
+    state = await api("/api/reload", { method: "POST", body: "{}" });
+    drawTabs();
+    drawGrid();
+    fillEditor();
+    message("profile reloaded", "ok");
+  } catch (e) { message(e.message, "bad"); }
+}
+
+$("f-kind").addEventListener("change", updateKindRows);
+$("apply").addEventListener("click", applyKey);
+$("clear").addEventListener("click", clearKey);
+$("page-add").addEventListener("click", addPage);
+$("page-rename").addEventListener("click", renamePage);
+$("page-delete").addEventListener("click", deletePage);
+$("reload").addEventListener("click", reloadProfile);
+$("brightness").addEventListener("change", (event) => setBrightness(event.target.value));
+
+(async function start() {
+  try {
+    state = await api("/api/state");
+    drawTabs();
+    drawGrid();
+    fillEditor();
+    $("brightness").value = state.brightness === null ? 60 : state.brightness;
+    $("brightness-value").textContent = $("brightness").value;
+  } catch (e) {
+    message("cannot reach the daemon: " + e.message, "bad");
+  }
+  setInterval(refresh, 1500);
+})();
+</script>
+</body>
+</html>
