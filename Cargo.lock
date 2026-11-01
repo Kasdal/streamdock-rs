@@ -69,8 +69,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "streamdock"
-version = "0.1.0"
+name = "streamdock-cli"
+version = "0.2.0"
+dependencies = [
+ "streamdock-core",
+]
+
+[[package]]
+name = "streamdock-core"
+version = "0.2.0"
 dependencies = [
  "jpeg-decoder",
  "jpeg-encoder",

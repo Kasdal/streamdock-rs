@@ -1,8 +1,8 @@
 # streamdock-rs
 
-Minimal Rust controller for the AJAZZ AKP-153E keypad.
+Rust controller for the AJAZZ AKP-153E keypad.
 The crate talks to the device through the Win32 HID API.
-It needs no C compiler, no vendor driver, and no vendor software.
+It needs no C compiler, no vendor driver and no vendor software.
 
 ## Status
 
@@ -14,6 +14,8 @@ It needs no C compiler, no vendor driver, and no vendor software.
 | Key events (read) | verified on hardware |
 | Image upload | verified on hardware |
 | Image rotation | measured on hardware: 270 degrees |
+| Reconnect after unplug | verified on hardware |
+| Unit tests | 39 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -71,26 +73,61 @@ The panel shows every image rotated. The host must rotate the bitmap before
 it encodes the JPEG. Measured on this unit: 90 degrees shows the image
 upside-down, 270 degrees shows it upright.
 
+The panel sends no key report until the host sends `CONNECT`.
+The host must repeat `CONNECT` every 8 seconds.
+
 ## Key layout
 
-Keys 1 to 15 fill the grid row by row, left to right.
-Keys 16 to 18 are the strip keys. The key IDs come from the Companion
-driver and match the reports of this unit.
+Keys 1 to 15 form a 5 by 3 grid of 96x96 pixel buttons.
+Keys 16 to 18 are three 80x80 pixel displays on the right side.
+The side strip has no buttons and sends no key event.
 
-| Key | ID | Size |
-| --- | --- | --- |
-| 1 to 15 | `0x0D 0x0A 0x07 0x04 0x01` / `0x0E 0x0B 0x08 0x05 0x02` / `0x0F 0x0C 0x09 0x06 0x03` | 96x96 |
-| 16 to 18 | `0x10 0x11 0x12` | 80x80 |
+| Key | ID | Size | Button |
+| --- | --- | --- | --- |
+| 1 to 15 | `0x0D 0x0A 0x07 0x04 0x01` / `0x0E 0x0B 0x08 0x05 0x02` / `0x0F 0x0C 0x09 0x06 0x03` | 96x96 | yes |
+| 16 to 18 | `0x10 0x11 0x12` | 80x80 | no, display only |
+
+## Workspace
+
+| Path | Content |
+| --- | --- |
+| `crates/core` | protocol, HID handle, image pipeline, reconnect (`streamdock-core`) |
+| `crates/cli` | the `streamdock` binary |
+| `handoff/HANDOFF.md` | session record and the product plan |
+| `installer-analysis.md` | static analysis of the vendor installer |
+
+The core crate holds no policy and no UI:
+
+```rust
+use std::time::Duration;
+use streamdock_core::{Device, Poll};
+
+let mut device = Device::open_first()?;
+device.start_session()?;
+device.set_brightness(60)?;
+device.send_image(1, &jpeg_bytes)?;
+if let Poll::Event(e) = device.poll_event(Duration::from_millis(200))? {
+    println!("key {} pressed={}", e.key, e.pressed);
+}
+```
+
+`Session` adds reconnect. It owns at most one `Device`.
+A failed call drops the handle, and the next poll reopens the panel.
+Reopen tries are limited to one every 500 ms.
 
 ## Build
 
 ```powershell
 $env:Path = "$env:USERPROFILE\.cargo\bin;<mingw64>\bin;<rustup self-contained>\;$env:Path"
 cargo build --release
+cargo test --release
 ```
 
 `<mingw64>` is the WinLibs `bin` directory.
 `<rustup self-contained>` helps the linker find the matching runtime.
+
+Cargo writes its progress to stderr, so PowerShell reports exit code 1.
+Read the `Finished` line.
 
 ## Commands
 
@@ -98,35 +135,46 @@ cargo build --release
 streamdock.exe list
 streamdock.exe desc
 streamdock.exe init
-streamdock.exe brightness --value 60
-streamdock.exe image --key 1 --file test-key1.jpg
+streamdock.exe watch --seconds 30
 streamdock.exe capture --seconds 30
+streamdock.exe brightness --value 60 [--curve]
+streamdock.exe led --value 40
+streamdock.exe clear [--key 1]
+streamdock.exe image --key 1 --file photo.jpg [--fit crop|stretch|none] [--rotate 270]
+streamdock.exe pattern
+streamdock.exe probe --test strip-size|strip-span|image-limit
+streamdock.exe bench --count 30
 streamdock.exe send --hex 4352540000444953 --i-understand
 ```
 
 * `list` shows every HID interface of the vendor ID.
 * `desc` shows the report IDs, sizes and usages of each interface.
 * `init` sends wake, heartbeat and refresh.
-* `brightness` sets panel brightness from 0 to 100.
-* `image` sends one JPEG to one key. Keys 1 to 15 take 96x96 pixels,
-  keys 16 to 18 take 80x80 pixels. The command rotates the image by 270
-  degrees, compresses it below 10 KB and uploads it. Use `--rotate 0` to
-  stop the rotation, or `--rotate 90` and `--rotate 180` to turn it further.
-* `capture` dumps input reports and decodes key events. It sends the
-  heartbeat first, because the panel sends no key reports until the host
-  starts a session. It repeats the heartbeat every 8 seconds.
+* `watch` prints key events. It reconnects after unplug, sleep and resume.
+* `capture` dumps raw input reports with the decoded key event.
+* `brightness` sets panel brightness from 0 to 100. `--curve` applies the
+  vendor formula `round((percent / 100) ^ 0.75 * 100)`.
+* `led` sets the LED brightness. This unit may have no LED ring.
+* `clear` clears one key or every key.
+* `image` uploads one image. The command scales the image to the key size,
+  rotates it 270 degrees and compresses it under the size limit.
+  `--fit crop` keeps the aspect ratio and cuts the long side.
+  `--fit stretch` distorts to the key size. `--fit none` sends the file as is.
+* `pattern` numbers keys 1 to 15 and leaves the side strip clear.
+  It shows the key order and the rotation.
+* `probe` answers one hardware question. See `handoff/HANDOFF.md`.
+* `bench` measures the image transfer rate.
 * `send` writes one raw payload. It refuses to write without `--i-understand`.
 
 ## Limits
 
-The key table in `src/model.rs` comes from the Companion driver. The IDs of
-keys 1 to 15 match the reports that this unit sent. Keys 16 to 18 are not
-pressed during the test.
+The key IDs of keys 1 to 15 match the reports that this unit sends.
+The side strip has no buttons, so keys 16 to 18 never send a key event.
 
 The vendor application was never installed or executed.
 The installer payload is not decompressed.
-See `installer-analysis.md` for the static analysis, and `handoff/HANDOFF.md`
-for the full session record.
+See `installer-analysis.md` for the static analysis, and
+`handoff/HANDOFF.md` for the full session record.
 
 ## Safety
 

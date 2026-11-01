@@ -1,0 +1,13 @@
+[package]
+name = "streamdock-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command line front end for streamdock-core"
+
+[[bin]]
+name = "streamdock"
+path = "src/main.rs"
+
+[dependencies]
+streamdock-core = { path = "../core" }

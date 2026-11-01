@@ -72,9 +72,13 @@ pub enum ReadOutcome {
 }
 
 /// An open HID handle.
+///
+/// The handle is owned by one thread. Reads and writes use separate completion
+/// events, so a pending read and a write cannot steal each other's signal.
 pub struct Device {
     handle: HANDLE,
-    event: HANDLE,
+    read_event: HANDLE,
+    write_event: HANDLE,
     pub info: Info,
 }
 
@@ -405,14 +409,29 @@ impl Device {
             return Err(std::io::Error::last_os_error());
         }
 
-        let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
-        if event.is_null() {
+        let read_event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+        if read_event.is_null() {
             let err = std::io::Error::last_os_error();
             unsafe { CloseHandle(handle) };
             return Err(err);
         }
 
-        Ok(Self { handle, event, info })
+        let write_event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+        if write_event.is_null() {
+            let err = std::io::Error::last_os_error();
+            unsafe {
+                CloseHandle(read_event);
+                CloseHandle(handle);
+            }
+            return Err(err);
+        }
+
+        Ok(Self {
+            handle,
+            read_event,
+            write_event,
+            info,
+        })
     }
 
     /// Read one input report. Waits `timeout_ms` for data.
@@ -425,7 +444,7 @@ impl Device {
         // completes, and both paths wait for that before they return.
         unsafe {
             let mut ov: OVERLAPPED = std::mem::zeroed();
-            ov.hEvent = self.event;
+            ov.hEvent = self.read_event;
 
             let ok = ReadFile(
                 self.handle,
@@ -441,7 +460,7 @@ impl Device {
                 }
             }
 
-            match WaitForSingleObject(self.event, timeout_ms) {
+            match WaitForSingleObject(self.read_event, timeout_ms) {
                 WAIT_OBJECT_0 => {
                     let mut read = 0u32;
                     if GetOverlappedResult(self.handle, &ov, &mut read, 0) == 0 {
@@ -478,12 +497,12 @@ impl Device {
     }
 
     /// Write one output report. The first byte is the report ID.
-    pub fn write_report(&self, report: &[u8]) -> std::io::Result<usize> {
+    pub fn write_report(&mut self, report: &[u8]) -> std::io::Result<usize> {
         // SAFETY: the overlapped structure and the report buffer live for the
         // whole call, and the call waits for completion or cancellation.
         unsafe {
             let mut ov: OVERLAPPED = std::mem::zeroed();
-            ov.hEvent = self.event;
+            ov.hEvent = self.write_event;
 
             let ok = WriteFile(
                 self.handle,
@@ -499,7 +518,7 @@ impl Device {
                 }
             }
 
-            match WaitForSingleObject(self.event, DEFAULT_TIMEOUT_MS) {
+            match WaitForSingleObject(self.write_event, DEFAULT_TIMEOUT_MS) {
                 WAIT_OBJECT_0 => {
                     let mut written = 0u32;
                     if GetOverlappedResult(self.handle, &ov, &mut written, 0) == 0 {
@@ -510,7 +529,7 @@ impl Device {
                 _ => {
                     let err = std::io::Error::last_os_error();
                     CancelIoEx(self.handle, &ov);
-                    WaitForSingleObject(self.event, CANCEL_WAIT_MS);
+                    WaitForSingleObject(self.write_event, CANCEL_WAIT_MS);
                     Err(err)
                 }
             }
@@ -524,7 +543,7 @@ impl Device {
     fn cancel_and_drain(&self, ov: &OVERLAPPED) -> bool {
         unsafe {
             CancelIoEx(self.handle, ov);
-            WaitForSingleObject(self.event, CANCEL_WAIT_MS) == WAIT_OBJECT_0
+            WaitForSingleObject(self.read_event, CANCEL_WAIT_MS) == WAIT_OBJECT_0
         }
     }
 
@@ -540,7 +559,8 @@ impl Drop for Device {
     fn drop(&mut self) {
         unsafe {
             CloseHandle(self.handle);
-            CloseHandle(self.event);
+            CloseHandle(self.read_event);
+            CloseHandle(self.write_event);
         }
     }
 }
@@ -550,3 +570,18 @@ pub const DEFAULT_TIMEOUT_MS: u32 = 200;
 
 /// How long to wait for a cancelled operation to complete.
 pub const CANCEL_WAIT_MS: u32 = 2000;
+
+/// Find the vendor collection of one product ID.
+///
+/// The lookup opens each interface of the vendor ID for a moment to read its
+/// caps, so it costs a few milliseconds. It is safe to call in a poll loop.
+pub fn find_vendor(pid: u16) -> Option<Info> {
+    enumerate(VENDOR_ID)
+        .into_iter()
+        .find(|d| d.is_vendor_collection() && d.product_id == pid)
+}
+
+/// True when the vendor collection of this product ID is present.
+pub fn is_present(pid: u16) -> bool {
+    find_vendor(pid).is_some()
+}

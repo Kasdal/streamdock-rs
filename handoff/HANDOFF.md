@@ -102,6 +102,12 @@ Vendor collection report layout, from the HID caps of this crate:
 | Image upload | 18 images uploaded, all 18 keys showed the tile |
 | Rotation | 90 degrees is upside-down, 270 degrees is upright |
 | Heartbeat is required | Two earlier capture runs saw no report without it |
+| Side strip is display only | A finger on the strip sends no report |
+| Side strip is three 80x80 displays | A complete 80x80 frame on each segment |
+| Digit sizes | 1 to 15 in the right order, no mirroring |
+| Reconnect after unplug | `watch` printed disconnected, then connected |
+| Images do not survive a replug | Panel shows only the AJAZZ start logo |
+| Image size rule | 15 keys at 9264 bytes each all show complete tiles |
 
 ## 5. Protocol
 
@@ -171,13 +177,21 @@ orientation, no mirroring.
 
 | File | Content |
 | --- | --- |
-| `src/hid.rs` | Win32 HID enumeration, caps dump, overlapped read and write |
-| `src/proto.rs` | Report framing, command words, key decode, hex helpers |
-| `src/model.rs` | Key table, image sizes, rotation value |
-| `src/image.rs` | JPEG decode, rotate, shrink under 10 KB |
-| `src/main.rs` | Command line and command handlers |
+| `crates/core/src/hid.rs` | Win32 HID enumeration, caps dump, overlapped read and write |
+| `crates/core/src/proto.rs` | Report framing, command words, key decode, hex helpers |
+| `crates/core/src/model.rs` | Key table, button and display split, image sizes, rotation |
+| `crates/core/src/image.rs` | JPEG decode, rotate, scale, crop, encode under the limit |
+| `crates/core/src/tile.rs` | Test tile renderer: numbers, frames, noise |
+| `crates/core/src/device.rs` | High level `Device`: session, commands, image retry, events |
+| `crates/core/src/session.rs` | Reconnect and hot plug over `Device` |
+| `crates/core/src/error.rs` | Error type |
+| `crates/cli/src/main.rs` | Command line and command handlers |
 
-Commands: `list`, `desc`, `init`, `brightness`, `image`, `capture`, `send`.
+Commands: `list`, `desc`, `init`, `watch`, `capture`, `brightness`, `led`,
+`clear`, `image`, `pattern`, `probe`, `bench`, `send`.
+
+The crate is a workspace since M1. `streamdock-core` holds the protocol and
+the device. `streamdock` is the binary.
 
 ## 8. Build
 
@@ -236,20 +250,27 @@ stderr. Read the `Finished` line, not the exit code.
 
 ## 11. Open items
 
-1. Press strip keys 16 to 18 and record their IDs. The table says `0x10` to
-   `0x12`. Reports for those IDs were not seen.
+1. ~~Press strip keys 16 to 18 and record their IDs.~~ Closed. The side strip
+   has no buttons. It is three 80x80 displays and sends no key report.
 2. Measure the LED array and LED brightness commands. They write fine, but the
    effect is not verified. This unit may have no LED ring.
 3. Check the brightness range. The vendor driver maps a percentage with
-   `pow(percent/100, 0.75) * 100`. This crate sends the raw value.
-4. Split the crate into a library and a thin binary if the next step is a
-   service or a desktop application.
-5. Add unit tests for `proto::frame`, `proto::parse_input` and
-   `image::rotate`. These are pure functions and need no device.
-6. Add a retry path for a failed image upload. The vendor driver retries three
-   times with a 20 ms pause.
+   `pow(percent/100, 0.75) * 100`. The crate implements both forms:
+   `proto::cmd::brightness` sends the raw value, and
+   `proto::cmd::brightness_curved` applies the curve. Compare them at 25, 50,
+   75 and 100.
+4. ~~Split the crate into a library and a thin binary.~~ Closed in M1.
+5. ~~Add unit tests for `proto::frame`, `proto::parse_input` and
+   `image::rotate`.~~ Closed. 39 tests, no device needed.
+6. ~~Add a retry path for a failed image upload.~~ Closed. `Device::send_image`
+   tries three times with a 20 ms pause.
 7. If the vendor application is ever installed, compare its traffic with this
    protocol. It is not installed now.
+8. Measure sleep and resume. Unplug and replug is verified. A system sleep was
+   not tested.
+9. Measure the exact image size boundary. 17868 bytes works only as the first
+   upload of a session. Two or more images above 10 KB corrupt the later keys.
+   The safe rule is 10 KB per image, which is verified for all 15 keys.
 
 ## 12. Safety rules for the next agent
 
@@ -467,7 +488,7 @@ Measured requirement: rotate by 270 degrees at the end, not at the start.
 | Milestone | Content | Done when |
 | --- | --- | --- |
 | M0 (done) | Protocol, CLI, hardware verification | Keys, images, brightness tested |
-| M1 | Split into `crates/core`, add reconnect and hot plug, add unit tests | Unplug and replug recovers with no restart |
+| M1 (done) | Split into `crates/core`, add reconnect and hot plug, add unit tests | Unplug and replug recovers with no restart |
 | M2 | Daemon, IPC, profile store, action engine for hotkey, text, launch, multi | Keys act while the UI is closed |
 | M3 | Tauri UI with grid, key editor, drag and drop, live preview | A user builds a 15 key page without a CLI |
 | M4 | Renderer with text, SVG, GIF, icon crop, themes, import and export | A page with icons and one animation runs |
@@ -478,17 +499,21 @@ Measured requirement: rotate by 270 degrees at the end, not at the start.
 
 Measure these on the unit before the design is frozen.
 
-1. Are strip keys 16 to 18 separate displays or one display? Press each strip
-   area and record the key ID.
-2. Is the strip touch sensitive? Read reports while a finger slides along it.
+1. ~~Are strip keys 16 to 18 separate displays or one display?~~ Answered.
+   Three separate 80x80 displays. A full 80x80 frame shows with all four sides.
+2. ~~Is the strip touch sensitive?~~ Answered. No. It sends no report.
 3. Does this unit have an LED ring? `LBLIG` and `SETLB` write without error,
    but no visible effect was confirmed.
 4. What brightness curve does the firmware use? Compare 25, 50, 75 and 100.
-5. What is the real image size limit? Try 10 KB, 20 KB and 40 KB JPEG.
-6. How fast can reports be sent back to back? Measure the time for 30 image
-   sends. This sets the animation frame rate.
-7. Does the panel keep the last image after a power cycle?
-8. Does the panel come back after sleep and resume without a reopen?
+5. ~~What is the real image size limit?~~ Answered. 10 KB per image is safe for
+   all 15 keys. A single 17868 byte image works as the first upload only.
+6. ~~How fast can reports be sent back to back?~~ Measured. 30 uploads of a
+   1748 byte tile take 18 ms in total, about 0.6 ms per upload. The API accepts
+   the data faster than the panel can show it, so this is not a frame rate.
+7. ~~Does the panel keep the last image after a power cycle?~~ Answered. No.
+   The panel shows only its start logo after a replug.
+8. Does the panel come back after sleep and resume without a reopen? Not
+   tested. Unplug and replug is verified.
 
 ## 18. Risk list
 
@@ -501,4 +526,51 @@ Measure these on the unit before the design is frozen.
    security products. Sign the binaries and keep the behaviour documented.
 5. The vendor protocol is a family protocol. Another firmware version of the
    same model may use other words. Probe with `desc` and `capture` first.
+6. The panel keeps no image across a power loss. A daemon must keep every tile
+   in memory and repaint after `Connected`, or the panel shows its start logo.
+
+## 19. Session 2: M1 and new hardware evidence
+
+Date: 2026-11-01. This session did the following work.
+
+1. Split the crate into the workspace `crates/core` and `crates/cli`.
+   The binary is still `streamdock`.
+2. Added `Device` with `open_first`, `start_session`, `send_image` (three
+   tries), `set_brightness`, `set_brightness_curved`, `clear_key`, `blank`,
+   `poll_event`, `read_raw` and `write_report`.
+3. Added `Session` with reconnect. It drops a dead handle and reopens the
+   panel. Reopen tries are limited to one every 500 ms. A failed call is
+   retried once after the reopen.
+4. Added 39 unit tests for the pure functions.
+5. Added the `watch`, `pattern`, `probe`, `bench`, `led` and `clear`
+   commands.
+6. Fixed the digit size in the test tile. 1 to 9 and 10 to 18 now use the
+   same glyph scale.
+7. Added `--fit crop|stretch|none` and the bilinear `resize` and `fit_cover`
+   functions. A dropped photo now fills the key without distortion.
+
+Hardware results from this session:
+
+| Test | Result |
+| --- | --- |
+| Strip is a button | No. No report arrives. |
+| Strip shape | Three 80x80 displays, all four frame sides visible |
+| Panel order and rotation | Correct, marker at the top left on every key |
+| Unplug and replug | `Disconnected`, then `Connected` within one poll |
+| Images after replug | Lost. Only the start logo is shown. |
+| 15 keys at 9264 bytes | All complete |
+| 4 keys at 17868 bytes | Only the first is complete |
+| Same, with a 300 ms pause | Only the first is complete |
+
+The last two rows are the important new rule. The panel does not keep large
+images for more than one key. A daemon must hold a copy of every tile and
+must repaint after `Connected`.
+
+Two more notes for the next session:
+
+1. `image::encode_quality` uses the crate default subsampling. The JPEG size
+   jumps between quality 89 (9264 bytes) and 90 (17868 bytes) because the
+   encoder switches sampling at 90. Keep this in mind when you tune quality.
+2. `probe --test image-limit --qualities ... [--pause MS]` is the tool for
+   more image tests. It sends the same noise tile to keys 1..N.
 

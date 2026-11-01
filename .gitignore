@@ -1,3 +1,4 @@
 ﻿target/
+*.log
 *.jpg
 !test-key1.jpg
