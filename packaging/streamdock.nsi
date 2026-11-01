@@ -56,6 +56,9 @@ Section "Install"
   SetOutPath "$INSTDIR"
   File "${SRCDIR}\streamdock.exe"
   File "${SRCDIR}\streamdockd.exe"
+  !if /FileExists "${SRCDIR}\streamdock-desktop.exe"
+    File "${SRCDIR}\streamdock-desktop.exe"
+  !endif
   File "${SRCDIR}\README.md"
   File "${SRCDIR}\LICENSE-Roboto.txt"
   File "..\PRIVACY.md"
@@ -63,13 +66,19 @@ Section "Install"
   ; Stop a running daemon so the files can be replaced.
   nsExec::Exec 'taskkill /IM streamdockd.exe /F'
   Pop $0
+  nsExec::Exec 'taskkill /IM streamdock-desktop.exe /F'
+  Pop $0
 
   ; Autostart and shortcuts.
   nsExec::Exec '"$INSTDIR\streamdock.exe" autostart install'
   Pop $0
 
   CreateDirectory "$SMPROGRAMS\Stream Dock"
-  CreateShortCut "$SMPROGRAMS\Stream Dock\Stream Dock.lnk" "$INSTDIR\streamdockd.exe" "" "$INSTDIR\streamdockd.exe" 0
+  !if /FileExists "${SRCDIR}\streamdock-desktop.exe"
+    CreateShortCut "$SMPROGRAMS\Stream Dock\Stream Dock.lnk" "$INSTDIR\streamdock-desktop.exe" "" "$INSTDIR\streamdock-desktop.exe" 0
+  !else
+    CreateShortCut "$SMPROGRAMS\Stream Dock\Stream Dock.lnk" "$INSTDIR\streamdockd.exe" "" "$INSTDIR\streamdockd.exe" 0
+  !endif
   CreateShortCut "$SMPROGRAMS\Stream Dock\Stream Dock Editor.lnk" "$INSTDIR\streamdock.exe" "ui"
   CreateShortCut "$SMPROGRAMS\Stream Dock\Uninstall Stream Dock.lnk" "$INSTDIR\uninstall.exe"
 
@@ -89,6 +98,8 @@ SectionEnd
 Section "Uninstall"
   nsExec::Exec 'taskkill /IM streamdockd.exe /F'
   Pop $0
+  nsExec::Exec 'taskkill /IM streamdock-desktop.exe /F'
+  Pop $0
   nsExec::Exec '"$INSTDIR\streamdock.exe" autostart remove'
   Pop $0
 
@@ -99,6 +110,7 @@ Section "Uninstall"
 
   Delete "$INSTDIR\streamdock.exe"
   Delete "$INSTDIR\streamdockd.exe"
+  Delete "$INSTDIR\streamdock-desktop.exe"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\LICENSE-Roboto.txt"
   Delete "$INSTDIR\PRIVACY.md"

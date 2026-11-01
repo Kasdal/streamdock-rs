@@ -6,213 +6,469 @@
 <title>Stream Dock</title>
 <style>
   :root {
-    --bg: #14161a;
-    --panel: #1c1f26;
-    --line: #2c313b;
-    --text: #e8eaf0;
-    --dim: #98a0b0;
+    --bg: #0d0f13;
+    --bg-2: #12151b;
+    --panel: #171b22;
+    --panel-2: #1d222b;
+    --field: #10131a;
+    --line: #262c37;
+    --line-2: #333b49;
+    --text: #e9ecf3;
+    --dim: #8f99aa;
+    --dim-2: #6c7686;
     --accent: #3f8cff;
+    --accent-soft: rgba(63, 140, 255, .16);
     --ok: #3ecf7a;
     --bad: #ef5b5b;
+    --radius: 12px;
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0;
-    font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-  }
-  header {
     display: flex;
-    gap: 16px;
-    align-items: center;
-    padding: 12px 18px;
-    background: var(--panel);
-    border-bottom: 1px solid var(--line);
+    flex-direction: column;
+    color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    background:
+      radial-gradient(1100px 560px at 50% -8%, #1a2130 0%, rgba(26, 33, 48, 0) 62%),
+      var(--bg);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
   }
-  header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .04em; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
-  .dot.on { background: var(--ok); }
-  .grow { flex: 1; }
-  main { display: grid; grid-template-columns: minmax(420px, 1fr) 340px; gap: 18px; padding: 18px; }
-  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
-  .tabs button { background: var(--panel); color: var(--dim); border: 1px solid var(--line); }
-  .tabs button.active { color: var(--text); border-color: var(--accent); }
-  .apps-row { margin-bottom: 12px; max-width: 520px; }
-  .apps-row input { width: 100%; }
-  .grid {
+
+  /* ---------- header ---------- */
+  header {
+    flex: 0 0 58px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 18px;
+    background: rgba(19, 22, 28, .86);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(10px);
+    z-index: 5;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .mark {
+    width: 26px; height: 26px;
+    border-radius: 7px;
+    background: #20252f;
+    border: 1px solid #2c3340;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 0.8fr);
+    grid-template-columns: repeat(3, 4px);
+    gap: 2px;
+    place-content: center;
+  }
+  .mark i { width: 4px; height: 4px; border-radius: 1px; background: #e8eaf0; }
+  .mark i:nth-child(5) { background: var(--accent); }
+  .brand-text { font-size: 12px; font-weight: 700; letter-spacing: .18em; }
+  .brand-text span { color: var(--dim-2); font-weight: 600; }
+
+  .chip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    font-size: 12px;
+  }
+  .chip b { font-weight: 600; }
+  .chip span { color: var(--dim); }
+
+  .grow { flex: 1; }
+
+  .status { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 0 3px rgba(239, 91, 91, .14); }
+  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px rgba(62, 207, 122, .14); }
+
+  .swatches { display: flex; align-items: center; gap: 6px; }
+  .swatch { position: relative; width: 24px; height: 24px; border-radius: 7px; overflow: hidden; border: 1px solid var(--line-2); background: #202020; cursor: pointer; }
+  .swatch input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+
+  .brightness { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--dim); }
+  input[type=range] { width: 96px; accent-color: var(--accent); }
+
+  .tools { display: flex; align-items: center; gap: 6px; }
+  .icon-btn {
+    height: 30px;
+    padding: 0 11px;
+    border-radius: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--text);
+    font: 600 12px/1 "Segoe UI", system-ui, sans-serif;
+    letter-spacing: .02em;
+    cursor: pointer;
+    transition: background .12s, border-color .12s, transform .06s;
+  }
+  .icon-btn:hover { background: #232a35; border-color: var(--line-2); }
+  .icon-btn:active { transform: translateY(1px); }
+  .icon-btn:disabled { opacity: .4; cursor: default; }
+  .icon-btn.primary { background: var(--accent); border-color: var(--accent); color: #06101f; }
+  .icon-btn.primary:hover { background: #57a0ff; }
+
+  /* ---------- workspace ---------- */
+  .workspace {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 208px minmax(0, 1fr) 356px;
+    min-height: 0;
+  }
+
+  /* pages */
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 18px 14px;
+    background: var(--bg-2);
+    border-right: 1px solid var(--line);
+    min-height: 0;
+  }
+  .side-title { font-size: 10px; letter-spacing: .18em; color: var(--dim-2); font-weight: 700; padding: 0 6px; }
+  .pages { display: flex; flex-direction: column; gap: 6px; overflow: auto; }
+  .page {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 8px;
-    max-width: 620px;
+    padding: 9px 11px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--dim);
+    font: 600 13px/1.2 "Segoe UI", system-ui, sans-serif;
+    text-align: left;
+    cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .page:hover { background: #191d25; color: var(--text); }
+  .page.active { background: var(--accent-soft); border-color: rgba(63, 140, 255, .35); color: var(--text); }
+  .page small { color: var(--dim-2); font-weight: 500; font-size: 11px; }
+  .page.active small { color: #9fc2ff; }
+  .sidebar .spacer { flex: 1; }
+
+  /* stage */
+  .stage {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 26px;
+    overflow: auto;
+    min-height: 0;
+  }
+  .device {
+    position: relative;
+    padding: 18px;
+    border-radius: 22px;
+    background: linear-gradient(180deg, #1a1e26, #111419);
+    border: 1px solid #272d38;
+    box-shadow:
+      0 40px 80px rgba(0, 0, 0, .55),
+      0 2px 0 rgba(255, 255, 255, .03) inset,
+      0 0 0 1px rgba(0, 0, 0, .35);
+  }
+  .device::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 22px;
+    pointer-events: none;
+    background: radial-gradient(70% 40% at 50% 0%, rgba(63, 140, 255, .05), transparent 70%);
+  }
+  .grid {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(5, 88px) 76px;
+    grid-auto-rows: 88px;
+    gap: 10px;
   }
   .key {
     position: relative;
-    aspect-ratio: 1;
-    border-radius: 10px;
-    border: 1px solid var(--line);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    cursor: pointer;
+    border-radius: 12px;
     overflow: hidden;
-    padding: 0;
-    background: #202020;
-    color: #fff;
+    background: #1d222b;
+    border: 1px solid #2b323e;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .35);
+    cursor: pointer;
+    transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
   }
-  .key img.tile { width: 100%; height: 100%; object-fit: contain; display: block; }
-  .key.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .key.drop { outline: 3px dashed var(--accent); outline-offset: -3px; }
-  .key .num { position: absolute; top: 3px; left: 5px; font-size: 9px; font-weight: 400; opacity: .65; text-shadow: 0 0 3px #000; }
-  .key .kind { position: absolute; bottom: 3px; right: 5px; font-size: 9px; font-weight: 400; opacity: .65; text-shadow: 0 0 3px #000; }
-  .strip { border-radius: 10px; }
-  aside {
+  .key:hover { transform: translateY(-2px); border-color: #3c4554; box-shadow: 0 10px 20px rgba(0, 0, 0, .45); }
+  .key.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(63, 140, 255, .35), 0 10px 22px rgba(0, 0, 0, .45); }
+  .key.drop { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(63, 140, 255, .45); }
+  .key img { width: 100%; height: 100%; display: block; object-fit: cover; }
+  .key.strip img { object-fit: contain; }
+  .key .num {
+    position: absolute; top: 4px; left: 6px;
+    font-size: 9px; font-weight: 600; color: rgba(255, 255, 255, .7);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, .9);
+    pointer-events: none;
+  }
+  .key .kind {
+    position: absolute; bottom: 4px; right: 6px;
+    font-size: 8px; letter-spacing: .06em; text-transform: uppercase;
+    color: rgba(255, 255, 255, .62);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, .9);
+    pointer-events: none;
+  }
+  .stage-hint { color: var(--dim-2); font-size: 12px; }
+
+  /* inspector */
+  .inspector {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px;
+    background: var(--bg-2);
+    border-left: 1px solid var(--line);
+    overflow: auto;
+    min-height: 0;
+  }
+  .card {
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 16px;
-    align-self: start;
-    position: sticky;
-    top: 18px;
+    border-radius: var(--radius);
+    padding: 14px;
   }
-  aside h2 { font-size: 14px; margin: 0 0 12px; }
-  label { display: block; margin-bottom: 10px; color: var(--dim); font-size: 12px; }
-  input[type=text], select, textarea {
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 11px;
+    letter-spacing: .14em;
+    color: var(--dim);
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .card h2 b { color: var(--text); letter-spacing: .02em; font-size: 13px; }
+  .field { margin-bottom: 10px; }
+  .field:last-child { margin-bottom: 0; }
+  .field > label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 4px; }
+  input[type=text], input[type=number], select, textarea {
     width: 100%;
-    margin-top: 4px;
-    padding: 6px 8px;
-    background: #12141a;
-    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--field);
     border: 1px solid var(--line);
-    border-radius: 6px;
+    color: var(--text);
     font: inherit;
+    outline: none;
   }
-  textarea { font-family: Consolas, monospace; font-size: 12px; resize: vertical; }
-  input[type=color] { width: 100%; height: 28px; margin-top: 4px; background: none; border: 1px solid var(--line); border-radius: 6px; }
+  input[type=text]:focus, input[type=number]:focus, select:focus, textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(63, 140, 255, .15);
+  }
+  textarea { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; resize: vertical; min-height: 120px; }
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  button {
-    padding: 7px 12px;
-    border-radius: 7px;
-    border: 1px solid var(--line);
-    background: #232833;
-    color: var(--text);
-    font: inherit;
-    cursor: pointer;
-  }
-  button:hover { border-color: var(--accent); }
-  button:disabled { opacity: .45; cursor: default; border-color: var(--line); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #06101f; font-weight: 700; }
-  .buttons { display: flex; gap: 8px; margin-top: 4px; }
-  .hint { color: var(--dim); font-size: 12px; }
-  #message { min-height: 18px; font-size: 12px; margin: 8px 0 0; }
+  .colour-row { display: flex; align-items: center; gap: 8px; }
+  .colour-row input[type=color] { width: 42px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: none; }
+  .colour-row input[type=text] { flex: 1; }
+  .hidden { display: none !important; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; }
+  .hint { color: var(--dim-2); font-size: 11px; margin: 6px 0 0; }
+  #message { min-height: 18px; font-size: 12px; margin: 0; }
   #message.bad { color: var(--bad); }
   #message.ok { color: var(--ok); }
-  .brightness { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 12px; }
-  input[type=range] { accent-color: var(--accent); }
-  .hidden { display: none; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } aside { position: static; } }
+
+  .statusbar {
+    flex: 0 0 26px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 18px;
+    font-size: 11px;
+    color: var(--dim-2);
+    border-top: 1px solid var(--line);
+    background: var(--bg-2);
+  }
+  .statusbar b { color: var(--dim); font-weight: 600; }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2a3140; border-radius: 6px; border: 2px solid var(--bg-2); }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  @media (max-width: 1180px) {
+    .workspace { grid-template-columns: 170px minmax(0, 1fr) 310px; }
+    .grid { grid-template-columns: repeat(5, 66px) 58px; grid-auto-rows: 66px; gap: 6px; }
+    .device { padding: 14px; border-radius: 18px; }
+    .chip span { display: none; }
+    .brightness > span:first-child { display: none; }
+    input[type=range] { width: 74px; }
+    .icon-btn { padding: 0 8px; }
+    .brand-text span { display: none; }
+    header { gap: 10px; padding: 0 12px; }
+  }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>STREAM DOCK</h1>
-  <span id="status" class="dot" title="panel"></span>
-  <span id="status-text">not connected</span>
+  <div class="brand">
+    <div class="mark"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="brand-text">STREAM <span>DOCK</span></div>
+  </div>
+
+  <div class="chip">
+    <b id="profile-name">-</b>
+    <span id="page-name">-</span>
+  </div>
+
   <span class="grow"></span>
-  <span class="brightness">
-    <label for="theme-bg" style="margin:0">theme bg</label>
-    <input id="theme-bg" type="color" value="#202020" style="width:34px;height:24px">
-    <label for="theme-fg" style="margin:0">text</label>
-    <input id="theme-fg" type="color" value="#f0f0f0" style="width:34px;height:24px">
-    <label for="brightness" style="margin:0">brightness</label>
-    <input id="brightness" type="range" min="0" max="100" value="60" style="width:120px">
+
+  <div class="status">
+    <span id="status" class="dot"></span>
+    <span id="status-text">offline</span>
+  </div>
+
+  <div class="swatches" title="Profile theme">
+    <span class="swatch" id="swatch-bg" title="Theme background"><input id="theme-bg" type="color" value="#202020"></span>
+    <span class="swatch" id="swatch-fg" title="Theme text colour"><input id="theme-fg" type="color" value="#f0f0f0"></span>
+  </div>
+
+  <div class="brightness">
+    <span>brightness</span>
+    <input id="brightness" type="range" min="0" max="100" value="60">
     <span id="brightness-value">60</span>
-  </span>
-  <button id="export">Export</button>
-  <button id="import">Import</button>
-  <input id="import-file" type="file" accept=".zip,application/zip" class="hidden">
-  <button id="undo" disabled>Undo</button>
-  <button id="reload">Reload profile</button>
+  </div>
+
+  <div class="tools">
+    <button id="export" class="icon-btn" title="Export the profile as a zip">Export</button>
+    <button id="import" class="icon-btn" title="Import a profile zip">Import</button>
+    <input id="import-file" type="file" accept=".zip,application/zip" class="hidden">
+    <button id="undo" class="icon-btn" disabled>Undo</button>
+    <button id="reload" class="icon-btn">Reload</button>
+  </div>
 </header>
 
-<main>
-  <section>
-    <div id="tabs" class="tabs"></div>
-    <div class="apps-row">
-      <label>Switch to this profile for these apps
-        <input id="f-apps" type="text" placeholder="obs64.exe, Photoshop.exe">
-      </label>
+<main class="workspace">
+  <aside class="sidebar">
+    <div class="side-title">PAGES</div>
+    <div id="tabs" class="pages"></div>
+    <div class="spacer"></div>
+    <button id="page-add" class="icon-btn">+ Add page</button>
+  </aside>
+
+  <section class="stage">
+    <div class="device">
+      <div id="grid" class="grid"></div>
     </div>
-    <div id="grid" class="grid"></div>
-    <div class="buttons" style="margin-top:12px">
-      <button id="page-add">Add page</button>
-      <button id="page-rename">Rename page</button>
-      <button id="page-delete">Delete page</button>
-    </div>
-    <p class="hint">Click a key to edit it. Drop a JPEG or PNG on a key to set its image. The panel updates when you apply the key.</p>
+    <div class="stage-hint">Click a key to edit it. Drop a JPEG, PNG, GIF or SVG onto a key.</div>
   </section>
 
-  <aside>
-    <h2 id="editor-title">Key 1</h2>
+  <aside class="inspector">
+    <div class="card">
+      <h2>KEY <b id="editor-title">1</b></h2>
 
-    <label>Label
-      <input id="f-label" type="text" maxlength="64" placeholder="shown when no image is set">
-    </label>
-
-    <label>Image
-      <select id="f-kind">
-        <option value="none">none, label only</option>
-        <option value="color">one colour</option>
-        <option value="text">text</option>
-        <option value="file">image file</option>
-        <option value="svg">SVG file</option>
-        <option value="animation">animated GIF</option>
-        <option value="icon">icon name, M4</option>
-      </select>
-    </label>
-
-    <div id="f-text-row">
-      <label>Text <input id="f-text" type="text" maxlength="64"></label>
-      <div class="row">
-        <label>Background <input id="f-bg" type="color" value="#202020"></label>
-        <label>Foreground <input id="f-fg" type="color" value="#f0f0f0"></label>
+      <div class="field">
+        <label>Label</label>
+        <input id="f-label" type="text" maxlength="64" placeholder="shown when no image is set">
       </div>
-    </div>
 
-    <div id="f-file-row" class="hidden">
-      <label>File path <input id="f-path" type="text" placeholder="C:\pictures\logo.jpg"></label>
-      <div id="f-phase-row" class="hidden">
-        <label>Start phase, ms (empty means automatic)
+      <div class="field">
+        <label>Image</label>
+        <select id="f-kind">
+          <option value="none">none, label only</option>
+          <option value="color">one colour</option>
+          <option value="text">text</option>
+          <option value="file">image file</option>
+          <option value="svg">SVG file</option>
+          <option value="animation">animated GIF</option>
+          <option value="icon">icon name</option>
+        </select>
+      </div>
+
+      <div id="f-text-row" class="hidden">
+        <div class="field">
+          <label>Text</label>
+          <input id="f-text" type="text" maxlength="64">
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Background</label>
+            <div class="colour-row">
+              <input id="f-bg" type="color" value="#202020">
+              <input id="f-bg-text" type="text" spellcheck="false">
+            </div>
+          </div>
+          <div class="field">
+            <label>Text colour</label>
+            <div class="colour-row">
+              <input id="f-fg" type="color" value="#f0f0f0">
+              <input id="f-fg-text" type="text" spellcheck="false">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="f-color-row" class="hidden">
+        <div class="field">
+          <label>Colour</label>
+          <div class="colour-row">
+            <input id="f-color" type="color" value="#202020">
+            <input id="f-color-text" type="text" spellcheck="false">
+          </div>
+        </div>
+      </div>
+
+      <div id="f-file-row" class="hidden">
+        <div class="field">
+          <label>File path</label>
+          <input id="f-path" type="text" placeholder="C:\pictures\logo.jpg">
+        </div>
+        <div id="f-phase-row" class="field hidden">
+          <label>Start phase, ms (empty means automatic)</label>
           <input id="f-phase" type="number" min="0" step="10" placeholder="automatic">
-        </label>
+        </div>
+      </div>
+
+      <div id="f-icon-row" class="hidden">
+        <div class="field">
+          <label>Icon name</label>
+          <input id="f-icon" type="text" list="icon-list" placeholder="mic">
+          <datalist id="icon-list"></datalist>
+        </div>
+        <div class="field">
+          <label>Icon file</label>
+          <button id="icon-file-button" class="icon-btn">Choose an SVG...</button>
+          <span id="icon-file-name" class="hint"></span>
+          <input id="f-icon-file" type="file" accept=".svg,image/svg+xml" class="hidden">
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:10px">
+        <label>Actions, JSON</label>
+        <textarea id="f-actions" rows="8" spellcheck="false"></textarea>
+        <p class="hint">hotkey, text, media, launch, multi, page, brightness, command, http, plugin</p>
+      </div>
+
+      <div class="actions">
+        <button id="apply" class="icon-btn primary">Apply key</button>
+        <button id="clear" class="icon-btn">Clear</button>
+      </div>
+      <p id="message"></p>
+    </div>
+
+    <div class="card">
+      <h2>PROFILE</h2>
+
+      <div class="field">
+        <label>Switch to this profile for these apps</label>
+        <input id="f-apps" type="text" placeholder="obs64.exe, Photoshop.exe">
+      </div>
+
+      <div class="row">
+        <button id="page-rename" class="icon-btn">Rename page</button>
+        <button id="page-delete" class="icon-btn">Delete page</button>
       </div>
     </div>
-
-    <div id="f-icon-row" class="hidden">
-      <label>Icon name <input id="f-icon" list="icon-list" placeholder="mic"></label>
-      <datalist id="icon-list"></datalist>
-      <label>Upload an SVG as this name
-        <input id="f-icon-file" type="file" accept=".svg,image/svg+xml">
-      </label>
-    </div>
-
-    <div id="f-color-row" class="hidden">
-      <label>Colour <input id="f-color" type="color" value="#202020"></label>
-    </div>
-
-    <label>Actions, JSON
-      <textarea id="f-actions" rows="9" spellcheck="false"></textarea>
-    </label>
-    <p class="hint">types: hotkey, text, media, launch, multi, page, brightness, command</p>
-
-    <div class="buttons">
-      <button id="apply" class="primary">Apply key</button>
-      <button id="clear">Clear key</button>
-    </div>
-    <p id="message"></p>
   </aside>
 </main>
+
+<div class="statusbar">
+  <span>daemon <b id="daemon-status">-</b></span>
+  <span class="grow"></span>
+  <span id="footer-note">Stream Dock</span>
+</div>
 
 <script>
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
@@ -271,6 +527,13 @@ function message(text, kind) {
   box.className = kind || "";
 }
 
+function tileUrl(key) {
+  return "/api/tile?page=" + state.page + "&key=" + key + "&v=" + tileVersion +
+    "&token=" + encodeURIComponent(TOKEN);
+}
+
+/* ---------------- grid ---------------- */
+
 function drawGrid() {
   const grid = $("grid");
   grid.innerHTML = "";
@@ -280,12 +543,11 @@ function drawGrid() {
   for (let key = 1; key <= KEY_COUNT; key++) {
     const config = page.keys[String(key)] || {};
     const cell = document.createElement("div");
-    cell.className = "key" + (key === selected ? " selected" : "");
+    cell.className = "key" + (key === selected ? " selected" : "") + (key > GRID_KEYS ? " strip" : "");
     cell.style.gridColumn = key <= GRID_KEYS ? String(((key - 1) % 5) + 1) : "6";
     cell.style.gridRow = key <= GRID_KEYS ? String(Math.floor((key - 1) / 5) + 1) : String(key - GRID_KEYS);
 
     const img = document.createElement("img");
-    img.className = "tile";
     img.alt = "";
     img.draggable = false;
     img.src = tileUrl(key);
@@ -325,69 +587,39 @@ function drawGrid() {
   }
 }
 
-/// URL of the true tile for one key, drawn by the daemon.
-function tileUrl(key) {
-  return "/api/tile?page=" + state.page + "&key=" + key + "&v=" + tileVersion +
-    "&token=" + encodeURIComponent(TOKEN);
-}
-
-/// Upload a dropped image and make it the key image.
-async function dropImage(key, file) {
-  if (!/^image\/(jpeg|png|gif|svg\+xml)$/i.test(file.type)) {
-    message("drop a JPEG, PNG, GIF or SVG file", "bad");
-    return;
-  }
-  try {
-    message("uploading " + file.name + "...");
-    const bytes = await file.arrayBuffer();
-    const asset = await api("/api/asset?name=" + encodeURIComponent(file.name), {
-      method: "POST",
-      headers: { "Content-Type": "application/octet-stream" },
-      body: bytes,
-    });
-    const profile = copyProfile();
-    const page = profile.pages[state.page];
-    const config = page.keys[String(key)] || {};
-    if (/svg/i.test(file.type) || /\.svg$/i.test(file.name)) {
-      config.image = { kind: "svg", path: asset.path, background: "#202020" };
-    } else if (/gif/i.test(file.type) || /\.gif$/i.test(file.name)) {
-      config.image = { kind: "animation", path: asset.path };
-    } else {
-      config.image = { kind: "file", path: asset.path };
-    }
-    page.keys[key] = config;
-    await saveProfile(profile, "image set on key " + key, state.rev);
-    selected = key;
-    fillEditor();
-  } catch (e) {
-    reportError(e);
-  }
-}
-
 function drawTabs() {
   const tabs = $("tabs");
   tabs.innerHTML = "";
   if (!state) return;
   state.profile.pages.forEach((page, index) => {
     const button = document.createElement("button");
-    button.textContent = page.name;
-    if (index === state.page) button.className = "active";
+    button.className = "page" + (index === state.page ? " active" : "");
+    const name = document.createElement("span");
+    name.textContent = page.name;
+    const count = document.createElement("small");
+    count.textContent = Object.keys(page.keys || {}).length + " keys";
+    button.appendChild(name);
+    button.appendChild(count);
     button.addEventListener("click", () => switchPage(index));
     tabs.appendChild(button);
   });
+  $("profile-name").textContent = state.profile.name;
+  $("page-name").textContent = state.page_name || "";
 }
 
+/* ---------------- editor ---------------- */
+
 function fillEditor() {
-  $("editor-title").textContent = "Key " + selected;
+  $("editor-title").textContent = String(selected);
   const config = keyConfig(selected) || {};
   const image = config.image || null;
 
   $("f-label").value = config.label || "";
   $("f-kind").value = image ? image.kind : "none";
   $("f-text").value = image && image.kind === "text" ? image.text || "" : "";
-  $("f-bg").value = colour(image && image.background, "#202020");
-  $("f-fg").value = colour(image && image.foreground, "#f0f0f0");
-  $("f-color").value = colour(image && image.color, "#202020");
+  setColour("f-bg", colour(image && image.background, "#202020"));
+  setColour("f-fg", colour(image && image.foreground, "#f0f0f0"));
+  setColour("f-color", colour(image && image.color, "#202020"));
   $("f-path").value = image && (image.kind === "file" || image.kind === "animation" || image.kind === "svg") ? image.path || "" : "";
   $("f-icon").value = image && image.kind === "icon" ? image.name || "" : "";
   $("f-phase").value =
@@ -399,6 +631,22 @@ function fillEditor() {
   editRev = state ? state.rev : 0;
   forceNext = false;
   message("");
+}
+
+function setColour(id, value) {
+  $(id).value = value;
+  const text = $(id + "-text");
+  if (text) text.value = value;
+}
+
+function syncColour(id) {
+  const colourInput = $(id);
+  const text = $(id + "-text");
+  if (!text) return;
+  if (/^#?[0-9a-fA-F]{6}$/.test(text.value.trim())) {
+    colourInput.value = colour(text.value, colourInput.value);
+  }
+  text.value = colourInput.value;
 }
 
 function updateKindRows() {
@@ -454,11 +702,10 @@ function updateUndoButton() {
   button.textContent = undoStack.length ? "Undo (" + undoStack.length + ")" : "Undo";
 }
 
-/// Turn a failure into a message. A 409 means another client saved first.
 function reportError(e) {
   if (e.status === 409) {
     forceNext = true;
-    message("Another window changed this profile. Press the button again to overwrite, or Reload profile to discard your change.", "bad");
+    message("Another window changed this profile. Press the button again to overwrite, or Reload to discard your change.", "bad");
   } else {
     message(e.message, "bad");
   }
@@ -486,7 +733,6 @@ async function saveProfile(profile, note, rev) {
   message(note || "saved", "ok");
 }
 
-/// Restore the profile before the last save.
 async function undo() {
   if (!undoStack.length) return;
   const previous = undoStack.pop();
@@ -505,6 +751,8 @@ async function undo() {
     drawTabs();
     drawGrid();
     fillEditor();
+    showTheme();
+    showApps();
     message("undo applied", "ok");
   } catch (e) {
     reportError(e);
@@ -570,7 +818,10 @@ async function refresh() {
     const pageChanged = !state || next.page !== state.page;
     state = next;
     $("status").classList.toggle("on", state.connected);
-    $("status-text").textContent = state.connected ? "panel connected" : "panel not connected";
+    $("status-text").textContent = state.connected ? "panel connected" : "panel offline";
+    $("daemon-status").textContent = "online";
+    $("profile-name").textContent = state.profile.name;
+    $("page-name").textContent = state.page_name || "";
 
     const signature = [state.page, state.connected, state.brightness, JSON.stringify(state.profile)].join("|");
     if (signature !== lastSignature) {
@@ -585,8 +836,11 @@ async function refresh() {
   } catch (e) {
     $("status").classList.remove("on");
     $("status-text").textContent = "daemon offline";
+    $("daemon-status").textContent = "offline";
   }
 }
+
+/* ---------------- header controls ---------------- */
 
 async function setBrightness(value) {
   $("brightness-value").textContent = value;
@@ -597,12 +851,13 @@ async function setBrightness(value) {
   }
 }
 
-/// Show the profile theme in the header colour pickers.
 function showTheme() {
   if (!state) return;
   const theme = state.profile.theme || {};
   $("theme-bg").value = colour(theme.background, "#202020");
   $("theme-fg").value = colour(theme.foreground, "#f0f0f0");
+  $("swatch-bg").style.background = $("theme-bg").value;
+  $("swatch-fg").style.background = $("theme-fg").value;
 }
 
 async function applyTheme() {
@@ -618,14 +873,12 @@ async function applyTheme() {
   }
 }
 
-/// Show the app rules of the profile.
 function showApps() {
   if (!state) return;
   const apps = Array.isArray(state.profile.apps) ? state.profile.apps : [];
   $("f-apps").value = apps.join(", ");
 }
 
-/// Save the comma separated app list.
 async function applyApps() {
   try {
     const apps = $("f-apps")
@@ -634,15 +887,13 @@ async function applyApps() {
       .filter((name) => name.length > 0);
     const profile = copyProfile();
     profile.apps = apps;
-    await saveProfile(
-      profile,
-      apps.length ? "app rules saved" : "app rules cleared",
-      state.rev
-    );
+    await saveProfile(profile, apps.length ? "app rules saved" : "app rules cleared", state.rev);
   } catch (e) {
     reportError(e);
   }
 }
+
+/* ---------------- pages ---------------- */
 
 async function addPage() {
   const name = prompt("New page name", "Page " + (state.profile.pages.length + 1));
@@ -681,12 +932,95 @@ async function deletePage() {
   } catch (e) { reportError(e); }
 }
 
-/// Download the active profile as a zip.
+async function reloadProfile() {
+  try {
+    state = await api("/api/reload", { method: "POST", body: "{}" });
+    lastSignature = null;
+    tileVersion = Date.now();
+    drawTabs();
+    drawGrid();
+    fillEditor();
+    showTheme();
+    showApps();
+    message("profile reloaded", "ok");
+  } catch (e) { message(e.message, "bad"); }
+}
+
+/* ---------------- files ---------------- */
+
+async function loadIcons() {
+  try {
+    const data = await api("/api/icons");
+    const list = $("icon-list");
+    list.innerHTML = "";
+    for (const name of data.icons) {
+      const option = document.createElement("option");
+      option.value = name;
+      list.appendChild(option);
+    }
+  } catch (e) {
+    // The list is a convenience only.
+  }
+}
+
+async function uploadIcon(file) {
+  const name = ($("f-icon").value || file.name.replace(/\.svg$/i, "")).trim();
+  if (!name) {
+    message("type an icon name first, then choose the file", "bad");
+    return;
+  }
+  try {
+    message("uploading " + file.name + "...");
+    const bytes = await file.arrayBuffer();
+    await api("/api/icon?name=" + encodeURIComponent(name), {
+      method: "POST",
+      headers: { "Content-Type": "image/svg+xml" },
+      body: bytes,
+    });
+    $("f-icon").value = name.toLowerCase();
+    await loadIcons();
+    message("icon " + name.toLowerCase() + " saved. Press Apply key to use it.", "ok");
+  } catch (e) {
+    message(e.message, "bad");
+  }
+}
+
+async function dropImage(key, file) {
+  if (!/^image\/(jpeg|png|gif|svg\+xml)$/i.test(file.type) && !/\.(jpe?g|png|gif|svg)$/i.test(file.name)) {
+    message("drop a JPEG, PNG, GIF or SVG file", "bad");
+    return;
+  }
+  try {
+    message("uploading " + file.name + "...");
+    const bytes = await file.arrayBuffer();
+    const asset = await api("/api/asset?name=" + encodeURIComponent(file.name), {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: bytes,
+    });
+    const profile = copyProfile();
+    const page = profile.pages[state.page];
+    const config = page.keys[String(key)] || {};
+    if (/\.svg$/i.test(file.name) || /svg/i.test(file.type)) {
+      config.image = { kind: "svg", path: asset.path, background: "#202020" };
+    } else if (/\.gif$/i.test(file.name) || /gif/i.test(file.type)) {
+      config.image = { kind: "animation", path: asset.path };
+    } else {
+      config.image = { kind: "file", path: asset.path };
+    }
+    page.keys[key] = config;
+    await saveProfile(profile, "image set on key " + key, state.rev);
+    selected = key;
+    fillEditor();
+  } catch (e) {
+    reportError(e);
+  }
+}
+
 function exportProfile() {
   window.location.href = "/api/export?token=" + encodeURIComponent(TOKEN);
 }
 
-/// Replace the active profile from a zip file.
 async function importProfileFile(file) {
   if (!file) return;
   if (!confirm("Import " + file.name + "? A profile with the same name is replaced.")) {
@@ -714,56 +1048,7 @@ async function importProfileFile(file) {
   }
 }
 
-async function reloadProfile() {
-  try {
-    state = await api("/api/reload", { method: "POST", body: "{}" });
-    lastSignature = null;
-    tileVersion = Date.now();
-    drawTabs();
-    drawGrid();
-    fillEditor();
-    message("profile reloaded", "ok");
-  } catch (e) { message(e.message, "bad"); }
-}
-
-/// Fill the icon name suggestions.
-async function loadIcons() {
-  try {
-    const data = await api("/api/icons");
-    const list = $("icon-list");
-    list.innerHTML = "";
-    for (const name of data.icons) {
-      const option = document.createElement("option");
-      option.value = name;
-      list.appendChild(option);
-    }
-  } catch (e) {
-    // The list is a convenience. A failure must not block editing.
-  }
-}
-
-/// Store an SVG in the profile icons folder under the name in the field.
-async function uploadIcon(file) {
-  const name = ($("f-icon").value || file.name.replace(/\.svg$/i, "")).trim();
-  if (!name) {
-    message("type an icon name first, then choose the file", "bad");
-    return;
-  }
-  try {
-    message("uploading " + file.name + "...");
-    const bytes = await file.arrayBuffer();
-    await api("/api/icon?name=" + encodeURIComponent(name), {
-      method: "POST",
-      headers: { "Content-Type": "image/svg+xml" },
-      body: bytes,
-    });
-    $("f-icon").value = name.toLowerCase();
-    await loadIcons();
-    message("icon " + name.toLowerCase() + " saved. Press Apply key to use it.", "ok");
-  } catch (e) {
-    message(e.message, "bad");
-  }
-}
+/* ---------------- wiring ---------------- */
 
 $("f-kind").addEventListener("change", updateKindRows);
 $("apply").addEventListener("click", applyKey);
@@ -780,15 +1065,25 @@ $("import-file").addEventListener("change", (event) => {
   if (file) importProfileFile(file);
   event.target.value = "";
 });
+$("f-icon-file").addEventListener("change", (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (file) {
+    $("icon-file-name").textContent = file.name;
+    uploadIcon(file);
+  }
+  event.target.value = "";
+});
+$("icon-file-button").addEventListener("click", () => $("f-icon-file").click());
 $("brightness").addEventListener("change", (event) => setBrightness(event.target.value));
 $("theme-bg").addEventListener("change", applyTheme);
 $("theme-fg").addEventListener("change", applyTheme);
 $("f-apps").addEventListener("change", applyApps);
-$("f-icon-file").addEventListener("change", (event) => {
-  const file = event.target.files && event.target.files[0];
-  if (file) uploadIcon(file);
-  event.target.value = "";
-});
+
+for (const id of ["f-bg", "f-fg", "f-color"]) {
+  $(id).addEventListener("change", () => syncColour(id));
+  const text = $(id + "-text");
+  if (text) text.addEventListener("change", () => syncColour(id));
+}
 
 document.addEventListener("keydown", (event) => {
   if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
@@ -808,6 +1103,9 @@ document.addEventListener("keydown", (event) => {
     showApps();
     $("brightness").value = state.brightness === null ? 60 : state.brightness;
     $("brightness-value").textContent = $("brightness").value;
+    $("status").classList.toggle("on", state.connected);
+    $("status-text").textContent = state.connected ? "panel connected" : "panel offline";
+    $("daemon-status").textContent = "online";
   } catch (e) {
     message("cannot reach the daemon: " + e.message, "bad");
   }

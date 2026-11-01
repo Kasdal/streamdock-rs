@@ -1164,3 +1164,79 @@ Open work:
 3. Localize the page names.
 4. Make the browser and mail keys ask for a target instead of a fixed one.
 
+## 33. Session 2 part 15: native desktop window
+
+Date: 2026-11-01. The user asked for a desktop app instead of a browser tab.
+The window is a Tauri 2 app around the editor page.
+
+Why Tauri 2:
+
+1. The editor page already exists and is tested against the API.
+2. CSS gives the Stream Deck look faster than a drawn UI.
+3. Elgato uses a web view too: Qt + CEF. WebView2 is the same shape.
+4. Tauri adds a real window, a task bar entry and installers.
+
+Why the window loads the daemon page:
+
+1. One UI code base for the browser and the window.
+2. The page is same-origin with the API, so there is no CORS work.
+3. The token stays in the URL of the window and never in a file the page
+   cannot read.
+
+Build:
+
+1. The MSVC Build Tools were installed with winget and the VCTools workload.
+2. The `x86_64-pc-windows-msvc` Rust target was added.
+3. The host toolchain stays GNU, so `build-desktop.ps1` loads `vcvars64.bat`,
+   adds the WinLibs `dlltool` for host build scripts, and builds the crate.
+4. `crates/desktop` is outside the workspace, so the GNU build of the daemon
+   and the CLI is not affected.
+
+The window:
+
+1. It reads `%LOCALAPPDATA%\StreamDock\runtime.json` and checks `/api/state`.
+2. When the daemon is down, it starts `streamdockd.exe` next to itself and
+   waits up to 6 seconds.
+3. It then navigates to the editor URL. If nothing answers, it keeps a dark
+   "starting" page.
+
+Look:
+
+1. Dark charcoal surface with a soft top glow.
+2. A 58 px header: brand, profile and page chip, connection state, theme
+   colours, brightness, and Export, Import, Undo and Reload.
+3. A page list on the left, with a key count per page.
+4. The device in the centre: a rounded panel, a 5 by 3 grid and the side
+   strip, real tiles, a hover lift and an accent ring on the selected key.
+5. An inspector on the right: key fields, actions JSON, Apply and Clear, then
+   the profile theme and app rules.
+
+Evidence:
+
+| Test | Result |
+| --- | --- |
+| Page load | No console errors |
+| Layout | 18 keys, 4 pages, no body overflow at 1072x899 |
+| Page switch from the UI | Daemon state changed to page 1, System |
+| Apply and clear a key | Label saved, then removed, with rev bumps |
+| Visible check | The user confirmed the layout looks right |
+| Daemon auto-start | The app found and started `streamdockd.exe` |
+| Window capture | The editor shown in a 1336x899 native window |
+| Installer | The setup includes the window and points the shortcut at it |
+
+The first two window builds failed for setup reasons, not code reasons:
+
+1. The host-side GNU crates needed `dlltool`, so `build-desktop.ps1` adds the
+   WinLibs `bin` folder to PATH.
+2. The daemon search walked five folders up; the repo layout needs six. It now
+   checks `dir`, `dir\release` and `dir\target\release` up to eight levels.
+
+Open work:
+
+1. Bundle the frontend in the app instead of loading the daemon page. That
+   needs Tauri commands or CORS.
+2. Add a tray menu to the window itself.
+3. Sign `streamdock-desktop.exe` and include it in the NSIS script.
+4. Remember the window size and position.
+5. A first-run tour that points at the page list and the key editor.
+

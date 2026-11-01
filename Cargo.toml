@@ -1,5 +1,7 @@
 [workspace]
 members = ["crates/core", "crates/store", "crates/render", "crates/actions", "crates/ipc", "crates/daemon", "crates/cli"]
+# The desktop window needs the MSVC toolchain, so it stays out of the GNU build.
+exclude = ["crates/desktop"]
 resolver = "2"
 
 [workspace.package]

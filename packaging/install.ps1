@@ -17,6 +17,7 @@ New-Item -ItemType Directory -Force $Target | Out-Null
 foreach ($name in @(
     "streamdock.exe",
     "streamdockd.exe",
+    "streamdock-desktop.exe",
     "README.md",
     "PRIVACY.md",
     "LICENSE-Roboto.txt",
@@ -28,7 +29,7 @@ foreach ($name in @(
     }
 }
 
-Get-Process streamdockd -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process streamdockd, streamdock-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 300
 
 if (-not $NoAutostart) {
@@ -39,10 +40,14 @@ if (-not $NoShortcut) {
     $startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut((Join-Path $startMenu "Stream Dock.lnk"))
-    $link.TargetPath = Join-Path $Target "streamdockd.exe"
+    $app = Join-Path $Target "streamdock-desktop.exe"
+    if (-not (Test-Path $app)) {
+        $app = Join-Path $Target "streamdockd.exe"
+    }
+    $link.TargetPath = $app
     $link.WorkingDirectory = $Target
     $link.IconLocation = (Join-Path $Target "streamdockd.exe") + ",0"
-    $link.Description = "Stream Dock panel daemon"
+    $link.Description = "Stream Dock"
     $link.Save()
 }
 

@@ -35,6 +35,7 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Plugin host | tested with a PowerShell plugin |
 | Signed update check | verified with a local signed manifest |
 | Preloaded tools profile | verified on hardware: media, pages, Notepad |
+| Desktop window | verified: Tauri window, starts the daemon, shows the editor |
 | Unit tests | 172 tests, no device needed |
 
 ## Device facts (measured)
@@ -355,6 +356,26 @@ The build ships the RFC 8032 test key as a placeholder. Replace
 
 `PRIVACY.md` states what the program stores, when it uses the network, and
 what a key can do. The data lives in `%LOCALAPPDATA%\StreamDock`.
+
+## Desktop app
+
+`streamdock-desktop.exe` is the native window for the editor. It has no browser
+chrome and its own task bar entry.
+
+It finds the daemon through `runtime.json`. When the daemon is not running, it
+starts `streamdockd.exe` next to itself, waits for the endpoint and then shows
+the editor.
+
+The desktop window is a Tauri 2 app, so it needs the MSVC toolchain. The rest of
+the project builds with GNU, so the crate sits outside the workspace.
+
+```powershell
+.\build-desktop.ps1
+.\crates\desktop\target\x86_64-pc-windows-msvc\release\streamdock-desktop.exe
+```
+
+`build-desktop.ps1` loads `vcvars64.bat`, adds the `x86_64-pc-windows-msvc`
+target and builds.
 
 ## Install
 

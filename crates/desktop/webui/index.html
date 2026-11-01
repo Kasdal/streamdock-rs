@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Stream Dock</title>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: radial-gradient(900px 500px at 50% -10%, #1b2130, #0d0f13 60%);
+      color: #e9ecf3;
+      font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+      display: grid;
+      place-items: center;
+    }
+    .box { text-align: center; }
+    .logo {
+      width: 56px; height: 56px; margin: 0 auto 18px;
+      border-radius: 14px;
+      background: #20242e;
+      border: 1px solid #2c3340;
+      display: grid; grid-template-columns: repeat(3, 8px); gap: 4px;
+      place-content: center;
+    }
+    .logo i { width: 8px; height: 8px; border-radius: 2px; background: #e8eaf0; }
+    .logo i:nth-child(5) { background: #3f8cff; }
+    h1 { font-size: 18px; letter-spacing: .16em; margin: 0 0 6px; }
+    p { color: #939cad; margin: 0; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="logo"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <h1>STREAM DOCK</h1>
+    <p>Starting the panel daemon...</p>
+  </div>
+</body>
+</html>

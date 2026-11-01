@@ -22,6 +22,12 @@ if (Test-Path $dist) {
 New-Item -ItemType Directory -Force $dist | Out-Null
 
 Copy-Item "target\release\streamdock.exe", "target\release\streamdockd.exe" $dist
+$desktop = "crates\desktop\target\x86_64-pc-windows-msvc\release\streamdock-desktop.exe"
+if (Test-Path $desktop) {
+    Copy-Item $desktop $dist
+} else {
+    Write-Warning "streamdock-desktop.exe is missing. Build it with build-desktop.ps1."
+}
 Copy-Item "README.md" $dist
 Copy-Item "PRIVACY.md" $dist
 Copy-Item "crates\render\assets\Roboto-OFL.txt" (Join-Path $dist "LICENSE-Roboto.txt")

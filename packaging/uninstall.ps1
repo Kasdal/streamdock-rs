@@ -14,7 +14,7 @@ if ($installed -and -not $PSBoundParameters.ContainsKey("Target")) {
 Write-Host "Stream Dock uninstaller"
 Write-Host "  target: $Target"
 
-Get-Process streamdockd -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process streamdockd, streamdock-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 300
 
 $cli = Join-Path $Target "streamdock.exe"
