@@ -678,6 +678,8 @@ API:
 | PUT | `/api/profile` | the whole profile as JSON |
 | POST | `/api/page` | `{"name": "Main"}` or `{"index": 0}` |
 | POST | `/api/brightness` | `{"value": 70}` |
+| GET | `/api/tile` | token in the query, a JPEG of one upright tile |
+| POST | `/api/asset` | raw image bytes, name in the query, returns the path |
 | POST | `/api/reload` | `{}` |
 
 Rules:
@@ -695,8 +697,10 @@ Rules:
 
 Open work for the editor:
 
-1. Drag and drop an image file onto a key.
-2. Draw the real tile in the browser, not an approximation.
+1. ~~Drag and drop an image file onto a key.~~ Closed. A JPEG or PNG drop is
+   copied to `assets` and becomes the key image.
+2. ~~Draw the real tile in the browser, not an approximation.~~ Closed. The
+   grid loads `/api/tile`, which renders the same tile as the panel.
 3. Undo, and a warning when a second client saves over a change.
 4. Show the render fault of a key in the grid.
 5. Add the strip key names to the grid labels.
@@ -704,4 +708,32 @@ Open work for the editor:
    grid.
 7. Add the tray icon and autostart to the daemon.
 8. Wrap the page in Tauri when the MSVC toolchain is available.
+
+## 22. Session 2 part 4: real tiles and drag and drop
+
+Date: 2026-11-01. Two editor features are now measured on hardware.
+
+| Test | Result |
+| --- | --- |
+| Grid shows real tiles | The page draws `/api/tile` for every key |
+| Drop a PNG on a key | File copied to `assets`, panel shows the image |
+| Tile endpoint | 96x96 JPEG of the upright tile |
+| Asset endpoint | Rejects a file that is not an image |
+| Relative asset path | Resolved against the profile folder |
+
+Design notes:
+
+1. The tile endpoint draws the upright tile. The panel rotation is added only
+   on the way to the device.
+2. A dropped file is decoded before it is stored, so a renamed text file never
+   reaches a profile.
+3. The stored name is `<stem>-<hash8>.<ext>`, so the same file always lands on
+   the same name and the browser cache stays correct.
+4. The asset name is sanitized to lowercase letters, digits and single dashes.
+   A path separator cannot escape the `assets` folder.
+5. The body limit is 8 MiB. The PNG side limit is 4096 pixels.
+6. `image::decode` now reads PNG as well as JPEG. An indexed PNG is rejected
+   with a clear message.
+7. The editor fetches a tile again only when the profile, the page or the
+   connection state changes. A poll does not reload 18 images.
 

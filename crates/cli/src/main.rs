@@ -699,7 +699,7 @@ fn preview(args: &[String]) -> Result<()> {
     }
     let page = &profile.pages[page_number - 1];
 
-    let sheet = streamdock_render::contact_sheet(page).map_err(Error::Message)?;
+    let sheet = streamdock_render::contact_sheet_in(page, store.dir()).map_err(Error::Message)?;
     let jpeg = image::encode_quality(&sheet, 90).map_err(Error::Message)?;
 
     let out = arg_value(args, "--out").unwrap_or_else(|| "profile-preview.jpg".to_string());

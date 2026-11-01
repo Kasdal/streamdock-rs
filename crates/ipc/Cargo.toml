@@ -8,4 +8,6 @@ description = "Loopback HTTP server and token for the Stream Dock daemon"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+streamdock-core = { path = "../core" }
 streamdock-store = { path = "../store" }
+streamdock-render = { path = "../render" }

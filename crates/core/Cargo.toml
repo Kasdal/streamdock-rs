@@ -8,4 +8,5 @@ description = "HID protocol, device handle and reconnect logic for Stream Dock k
 [dependencies]
 jpeg-decoder.workspace = true
 jpeg-encoder.workspace = true
+png = "0.17"
 windows-sys.workspace = true

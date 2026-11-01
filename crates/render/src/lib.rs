@@ -9,6 +9,8 @@
 //! Text uses one glyph scale for a whole page, so a label `1` and a label `10`
 //! have the same size.
 
+use std::path::{Path, PathBuf};
+
 use streamdock_core::image::{self, Rgb};
 use streamdock_core::tile;
 use streamdock_core::{model, proto};
@@ -68,8 +70,29 @@ pub fn scale_for(page: &Page, key: u8) -> usize {
     }
 }
 
+/// Resolve an image path. A relative path is joined to the profile folder, so
+/// a profile and its assets can move as one folder.
+pub fn resolve_path(base: &Path, path: &str) -> PathBuf {
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        base.join(candidate)
+    }
+}
+
 /// Compose the tile for one key, upright.
 pub fn compose(config: Option<&Key>, size: (u16, u16), scale: usize) -> Result<Rgb, String> {
+    compose_in(config, size, scale, Path::new("."))
+}
+
+/// Compose the tile for one key, with a base folder for relative image paths.
+pub fn compose_in(
+    config: Option<&Key>,
+    size: (u16, u16),
+    scale: usize,
+    base: &Path,
+) -> Result<Rgb, String> {
     let (width, height) = size;
 
     let Some(key) = config else {
@@ -92,8 +115,10 @@ pub fn compose(config: Option<&Key>, size: (u16, u16), scale: usize) -> Result<R
                 Ok(tile::label_tile_scaled(text, size, bg, fg, scale))
             }
             ImageSpec::File { path } => {
-                let bytes = std::fs::read(path)
-                    .map_err(|e| format!("cannot read image {path}: {e}"))?;
+                let resolved = resolve_path(base, path);
+                let bytes = std::fs::read(&resolved).map_err(|e| {
+                    format!("cannot read image {}: {e}", resolved.display())
+                })?;
                 let decoded = image::decode(&bytes)?;
                 Ok(image::fit_cover(&decoded, width, height))
             }
@@ -129,14 +154,29 @@ pub fn compose(config: Option<&Key>, size: (u16, u16), scale: usize) -> Result<R
 ///
 /// The result is a JPEG that the firmware accepts.
 pub fn encode(config: Option<&Key>, size: (u16, u16), scale: usize) -> Result<Vec<u8>, String> {
-    let upright = compose(config, size, scale)?;
+    encode_in(config, size, scale, Path::new("."))
+}
+
+/// Compose, rotate and encode one key tile, with a base folder for images.
+pub fn encode_in(
+    config: Option<&Key>,
+    size: (u16, u16),
+    scale: usize,
+    base: &Path,
+) -> Result<Vec<u8>, String> {
+    let upright = compose_in(config, size, scale, base)?;
     let rotated = image::rotate(&upright, model::ROTATION);
     image::encode_max(&rotated, proto::MAX_IMAGE_BYTES)
 }
 
 /// Encode one key of a page, with the page scale already applied.
 pub fn encode_key(page: &Page, key: u8) -> Result<Vec<u8>, String> {
-    encode(page.key(key), model::key_size(key), scale_for(page, key))
+    encode_key_in(page, key, Path::new("."))
+}
+
+/// Encode one key of a page, with a base folder for relative image paths.
+pub fn encode_key_in(page: &Page, key: u8, base: &Path) -> Result<Vec<u8>, String> {
+    encode_in(page.key(key), model::key_size(key), scale_for(page, key), base)
 }
 
 /// A tile that reports a render fault, so the key never goes blank silently.
@@ -152,6 +192,11 @@ pub fn fault_tile(size: (u16, u16)) -> Result<Vec<u8>, String> {
 /// device. The grid is five columns by three rows, and the side strip is one
 /// narrow column on the right.
 pub fn contact_sheet(page: &Page) -> Result<Rgb, String> {
+    contact_sheet_in(page, Path::new("."))
+}
+
+/// A picture of the whole panel for one page, with a base folder for images.
+pub fn contact_sheet_in(page: &Page, base: &Path) -> Result<Rgb, String> {
     let cell = model::GRID_KEY_PIXELS as usize;
     let strip = model::STRIP_KEY_PIXELS as usize;
     let width = cell * model::COLUMNS as usize + strip;
@@ -165,7 +210,7 @@ pub fn contact_sheet(page: &Page) -> Result<Rgb, String> {
     for key in 1..=model::KEY_COUNT {
         let (x, y) = sheet_position(key);
         let size = model::key_size(key);
-        let tile = compose(page.key(key), size, scale_for(page, key))?;
+        let tile = compose_in(page.key(key), size, scale_for(page, key), base)?;
         blit(&mut data, width, &tile, x, y);
     }
 
@@ -363,6 +408,16 @@ mod tests {
         assert_eq!(sheet_position(15), (96 * 4, 96 * 2));
         assert_eq!(sheet_position(16), (96 * 5, 0));
         assert_eq!(sheet_position(18), (96 * 5, 96 * 2));
+    }
+
+    #[test]
+    fn a_relative_path_uses_the_base_folder() {
+        let base = Path::new("C:/profiles");
+        let relative = resolve_path(base, "assets/picture.png");
+        assert!(relative.starts_with(base));
+        assert!(relative.ends_with("picture.png"));
+        let absolute = resolve_path(base, "C:/pictures/picture.jpg");
+        assert_eq!(absolute, PathBuf::from("C:/pictures/picture.jpg"));
     }
 
     #[test]

@@ -17,7 +17,8 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Reconnect after unplug | verified on hardware |
 | Daemon with actions | verified on hardware: page switch, repaint |
 | Browser editor | verified on hardware: edit a key, panel updates |
-| Unit tests | 114 tests, no device needed |
+| Drag and drop | verified on hardware: drop a PNG on a key |
+| Unit tests | 118 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -148,6 +149,10 @@ The editor is one HTML page with a key grid and a key editor. Apply a key and
 the panel changes within a second. The page needs no build step and no extra
 runtime.
 
+The grid shows the real tile that the daemon draws, not an approximation.
+Drag a JPEG or PNG file onto a key to set its image. The file is copied into
+the `assets` folder next to the profile, so the profile stays portable.
+
 The socket binds to `127.0.0.1` only. Every request needs the token.
 A second daemon exits, because a named mutex guards the device.
 
@@ -196,6 +201,10 @@ One profile is one JSON file. A page holds keys by number.
 
 Image kinds: `color`, `text`, `file`, `icon` (the icon name is drawn as text
 until the icon library arrives in M4).
+
+A `file` path may be absolute, or relative to the profile folder. The editor
+stores a dropped image as `assets/<name>-<hash>.jpg` or `.png`. JPEG and PNG
+are accepted.
 
 Action types: `hotkey`, `text`, `media`, `launch`, `multi`, `page`,
 `brightness`, `command`. A `command` action runs a program, so a profile with

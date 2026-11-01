@@ -114,7 +114,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let shared = ipc::Shared::new(ipc::State::new(profile.clone(), page));
     let (commands, incoming) = mpsc::channel::<ipc::Command>();
     if !args.iter().any(|a| a == "--no-ui") {
-        match ipc::Server::start(Arc::clone(&shared), commands) {
+        match ipc::Server::start(Arc::clone(&shared), commands, store.dir().to_path_buf()) {
             Ok(server) => {
                 match server.write_runtime_file() {
                     Ok(path) => log(format!("runtime file {}", path.display())),
@@ -153,7 +153,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             SessionPoll::Connected => {
                 log("panel connected");
                 shared.update(|state| state.connected = true);
-                paint_all(&mut session, &profile, page);
+                paint_all(&mut session, &profile, page, store.dir());
             }
             SessionPoll::Disconnected => {
                 let reason = match session.last_error() {
@@ -219,7 +219,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                             page = index;
                             log(format!("page {}", profile.pages[page].name));
                             shared.update(|state| state.set_page(index));
-                            paint_all(&mut session, &profile, page);
+                            paint_all(&mut session, &profile, page, store.dir());
                         }
                         Some(_) => {}
                         None => log(format!("no page named {target:?}")),
@@ -266,7 +266,7 @@ fn handle_command(
                 *page = profile.pages.len().saturating_sub(1);
             }
             log(format!("profile saved by the editor, page {}", profile.pages[*page].name));
-            paint_all(session, profile, *page);
+            paint_all(session, profile, *page, store.dir());
             shared.update(|state| {
                 state.set_profile(profile.clone());
                 state.set_page(*page);
@@ -277,7 +277,7 @@ fn handle_command(
             Some(index) => {
                 *page = index;
                 log(format!("page {} from the editor", profile.pages[index].name));
-                paint_all(session, profile, *page);
+                paint_all(session, profile, *page, store.dir());
                 shared.update(|state| state.set_page(index));
                 let _ = reply.send(Ok(shared.snapshot()));
             }
@@ -304,7 +304,7 @@ fn handle_command(
                     *page = 0;
                 }
                 log(format!("profile reloaded, page {}", profile.pages[*page].name));
-                paint_all(session, profile, *page);
+                paint_all(session, profile, *page, store.dir());
                 shared.update(|state| {
                     state.set_profile(profile.clone());
                     state.set_page(*page);
@@ -322,14 +322,14 @@ fn handle_command(
 ///
 /// A render fault draws a red ERR tile, so a broken image file does not leave
 /// a stale key on the panel.
-fn paint_all(session: &mut Session, profile: &Profile, page: usize) {
+fn paint_all(session: &mut Session, profile: &Profile, page: usize, base: &std::path::Path) {
     let page_ref = &profile.pages[page];
     let mut sent = 0usize;
 
     let result = session.with_device(|dev| {
         sent = 0;
         for key in 1..=model::KEY_COUNT {
-            let jpeg = match render::encode_key(page_ref, key) {
+            let jpeg = match render::encode_key_in(page_ref, key, base) {
                 Ok(jpeg) => jpeg,
                 Err(e) => {
                     log(format!("key {key}: {e}"));

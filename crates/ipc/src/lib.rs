@@ -17,7 +17,7 @@ pub mod http;
 
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
@@ -25,12 +25,17 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use streamdock_core::{image, model};
+use streamdock_render as render;
 use streamdock_store::profile::Profile;
 
 use http::{Request, Response};
 
 /// Most connections served at the same time.
 pub const MAX_CONNECTIONS: usize = 16;
+
+/// Largest image that the editor may upload.
+pub const MAX_ASSET_BYTES: usize = 8 * 1024 * 1024;
 
 /// How long a request waits for the daemon to answer.
 pub const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -136,7 +141,10 @@ pub struct Server {
 
 impl Server {
     /// Bind a free loopback port and start to serve.
-    pub fn start(shared: Arc<Shared>, commands: Sender<Command>) -> io::Result<Self> {
+    ///
+    /// `base` is the profile folder. A relative image path in a profile is
+    /// resolved against it, and an uploaded image is stored under `assets`.
+    pub fn start(shared: Arc<Shared>, commands: Sender<Command>, base: PathBuf) -> io::Result<Self> {
         let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
         let port = listener.local_addr()?.port();
         let token = make_token();
@@ -145,6 +153,7 @@ impl Server {
             shared,
             commands,
             token: token.clone(),
+            base,
         });
 
         thread::Builder::new()
@@ -187,6 +196,7 @@ struct Context {
     shared: Arc<Shared>,
     commands: Sender<Command>,
     token: String,
+    base: PathBuf,
 }
 
 static OPEN: AtomicUsize = AtomicUsize::new(0);
@@ -308,8 +318,140 @@ fn route(context: &Context, request: &Request) -> Response {
             }
             roundtrip(context, |reply| Command::Reload { reply })
         }
+        ("GET", "/api/tile") => {
+            if request.query_value("token") != Some(context.token.as_str()) {
+                return Response::message(401, "missing or wrong token");
+            }
+            tile_image(context, request)
+        }
+        ("POST", "/api/asset") => {
+            if !api_token_ok(context, request) {
+                return Response::message(401, "missing or wrong token");
+            }
+            store_asset(context, request)
+        }
         _ => Response::message(404, "no such path"),
     }
+}
+
+/// Draw one key tile as a JPEG for the editor grid.
+///
+/// The tile is upright, because that is what a person expects to see. The
+/// panel rotation is added only when the image goes to the device.
+fn tile_image(context: &Context, request: &Request) -> Response {
+    let page_index: usize = match request.query_value("page").and_then(|v| v.parse().ok()) {
+        Some(v) => v,
+        None => return Response::message(400, "need a page number"),
+    };
+    let key: u8 = match request.query_value("key").and_then(|v| v.parse().ok()) {
+        Some(v) if model::is_valid_key(v) => v,
+        _ => return Response::message(400, "need a key number 1..=18"),
+    };
+
+    let state = context.shared.snapshot();
+    let Some(page) = state.profile.pages.get(page_index) else {
+        return Response::message(404, "no such page");
+    };
+
+    let scale = render::scale_for(page, key);
+    let tile = match render::compose_in(page.key(key), model::key_size(key), scale, &context.base) {
+        Ok(tile) => tile,
+        Err(message) => return Response::message(400, message),
+    };
+
+    match image::encode_quality(&tile, 88) {
+        Ok(jpeg) => Response {
+            status: 200,
+            content_type: "image/jpeg",
+            body: jpeg,
+        },
+        Err(message) => Response::message(500, message),
+    }
+}
+
+/// Save an uploaded image under `assets` and return its relative path.
+fn store_asset(context: &Context, request: &Request) -> Response {
+    let name = request.query_value("name").unwrap_or("image");
+    let Some(extension) = image_extension(name) else {
+        return Response::message(400, "only .jpg and .png files are accepted");
+    };
+
+    if request.body.len() > MAX_ASSET_BYTES {
+        return Response::message(
+            413,
+            format!(
+                "image is {} bytes, the limit is {MAX_ASSET_BYTES}",
+                request.body.len()
+            ),
+        );
+    }
+
+    // Decode first: a file with the wrong content never reaches the profile.
+    if let Err(message) = image::decode(&request.body) {
+        return Response::message(400, message);
+    }
+
+    let folder = context.base.join("assets");
+    if let Err(e) = std::fs::create_dir_all(&folder) {
+        return Response::message(500, format!("cannot create {}: {e}", folder.display()));
+    }
+
+    let file = format!(
+        "{}-{}.{}",
+        sanitize_stem(name),
+        short_hash(&request.body),
+        extension
+    );
+    let path = folder.join(&file);
+    if let Err(e) = std::fs::write(&path, &request.body) {
+        return Response::message(500, format!("cannot write {}: {e}", path.display()));
+    }
+
+    let relative = format!("assets/{file}");
+    Response::json(200, serde_json::json!({ "path": relative }).to_string())
+}
+
+fn image_extension(name: &str) -> Option<&'static str> {
+    let extension = Path::new(name).extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "jpg" | "jpeg" => Some("jpg"),
+        "png" => Some("png"),
+        _ => None,
+    }
+}
+
+/// A safe file stem: lowercase letters, digits and single dashes.
+fn sanitize_stem(name: &str) -> String {
+    let stem = Path::new(name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("image");
+
+    let mut out = String::with_capacity(stem.len());
+    for ch in stem.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    let short: String = trimmed.chars().take(32).collect();
+    if short.is_empty() {
+        "image".to_string()
+    } else {
+        short
+    }
+}
+
+/// Eight hex characters from the content, so the same file gets one name.
+fn short_hash(bytes: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:08x}", (hash ^ (hash >> 32)) as u32)
 }
 
 fn api_token_ok(context: &Context, request: &Request) -> bool {
@@ -377,6 +519,7 @@ mod tests {
             shared: Shared::new(state),
             commands,
             token: "abc123".to_string(),
+            base: PathBuf::from("."),
         }
     }
 

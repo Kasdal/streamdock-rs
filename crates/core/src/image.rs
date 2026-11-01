@@ -40,8 +40,19 @@ impl Rgb {
     }
 }
 
-/// Decode a JPEG file into RGB pixels.
+/// Decode a JPEG or PNG file into RGB pixels.
 pub fn decode(bytes: &[u8]) -> Result<Rgb, String> {
+    if bytes.starts_with(&[0xFF, 0xD8]) {
+        decode_jpeg(bytes)
+    } else if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        decode_png(bytes)
+    } else {
+        Err("not a JPEG or PNG file".into())
+    }
+}
+
+/// Decode one JPEG file into RGB pixels.
+fn decode_jpeg(bytes: &[u8]) -> Result<Rgb, String> {
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
     let pixels = decoder.decode().map_err(|e| format!("decode: {e}"))?;
     let info = decoder
@@ -71,6 +82,51 @@ pub fn decode(bytes: &[u8]) -> Result<Rgb, String> {
     };
 
     Rgb::new(width, height, data)
+}
+
+/// Largest PNG side that the decoder accepts, in pixels.
+pub const MAX_PNG_SIDE: u32 = 4096;
+
+/// Decode one PNG file into RGB pixels.
+///
+/// The alpha channel is dropped. A key tile is opaque, so the profile
+/// background shows through only when the renderer draws it.
+fn decode_png(bytes: &[u8]) -> Result<Rgb, String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("decode png: {e}"))?;
+
+    let mut buffer = vec![0u8; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|e| format!("decode png: {e}"))?;
+
+    if info.width > MAX_PNG_SIDE || info.height > MAX_PNG_SIDE {
+        return Err(format!(
+            "PNG is {}x{}, the limit is {MAX_PNG_SIDE}x{MAX_PNG_SIDE}",
+            info.width, info.height
+        ));
+    }
+
+    let pixels = &buffer[..info.buffer_size()];
+    let data = match info.color_type {
+        png::ColorType::Rgb => pixels.to_vec(),
+        png::ColorType::Rgba => pixels
+            .chunks_exact(4)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect(),
+        png::ColorType::Grayscale => pixels.iter().flat_map(|&g| [g, g, g]).collect(),
+        png::ColorType::GrayscaleAlpha => pixels
+            .chunks_exact(2)
+            .flat_map(|p| [p[0], p[0], p[0]])
+            .collect(),
+        png::ColorType::Indexed => {
+            return Err("indexed PNG is not supported, save it as RGB".into())
+        }
+    };
+
+    Rgb::new(info.width as u16, info.height as u16, data)
 }
 
 /// Rotate the image 90 degrees clockwise.
@@ -349,5 +405,44 @@ mod tests {
     fn new_rejects_a_wrong_length() {
         assert!(Rgb::new(2, 2, vec![0; 11]).is_err());
         assert!(Rgb::new(2, 2, vec![0; 12]).is_ok());
+    }
+
+    #[test]
+    fn png_round_trips() {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 4, 3);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().expect("header");
+            let pixels: Vec<u8> = (0..36u32).map(|i| (i * 7 % 256) as u8).collect();
+            writer.write_image_data(&pixels).expect("data");
+            writer.finish().expect("finish");
+        }
+        let decoded = decode(&bytes).expect("decode png");
+        assert_eq!((decoded.width, decoded.height), (4, 3));
+        assert_eq!(decoded.data.len(), 4 * 3 * 3);
+        assert_eq!(decoded.data[0], 0);
+        assert_eq!(decoded.data[3], 21);
+    }
+
+    #[test]
+    fn a_png_with_alpha_drops_the_alpha_channel() {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().expect("header");
+            writer.write_image_data(&[10, 20, 30, 128]).expect("data");
+            writer.finish().expect("finish");
+        }
+        let decoded = decode(&bytes).expect("decode png");
+        assert_eq!(decoded.pixel(0, 0), [10, 20, 30]);
+    }
+
+    #[test]
+    fn unknown_formats_are_rejected() {
+        assert!(decode(b"not an image").is_err());
     }
 }
