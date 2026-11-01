@@ -1,0 +1,10 @@
+[package]
+name = "streamdock-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tile renderer for Stream Dock keys: colour, text and image files"
+
+[dependencies]
+streamdock-core = { path = "../core" }
+streamdock-store = { path = "../store" }

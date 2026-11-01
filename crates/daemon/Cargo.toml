@@ -1,0 +1,17 @@
+[package]
+name = "streamdock-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Background daemon that owns the panel, paints keys and runs actions"
+
+[[bin]]
+name = "streamdockd"
+path = "src/main.rs"
+
+[dependencies]
+streamdock-core = { path = "../core" }
+streamdock-store = { path = "../store" }
+streamdock-render = { path = "../render" }
+streamdock-actions = { path = "../actions" }
+windows-sys.workspace = true

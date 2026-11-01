@@ -24,6 +24,8 @@ use streamdock_core::model;
 use streamdock_core::proto;
 use streamdock_core::session::{Session, SessionPoll};
 use streamdock_core::tile;
+use streamdock_store::profile::{Action, ImageSpec, Profile};
+use streamdock_store::Store;
 
 fn usage() {
     eprintln!("streamdock commands:");
@@ -39,6 +41,8 @@ fn usage() {
     eprintln!("  pattern [--seconds N]");
     eprintln!("  probe --test strip-size|strip-span|image-limit");
     eprintln!("  bench [--count N] [--key 1..18]");
+    eprintln!("  profile <list|init|demo|show|validate> [--name N] [--dir PATH]");
+    eprintln!("  preview [--name N] [--page N] [--out FILE] [--dir PATH]");
     eprintln!("  send --hex 4352540000444953 --i-understand");
 }
 
@@ -84,6 +88,8 @@ fn main() {
         "pattern" => pattern(&args),
         "probe" => probe(&args),
         "bench" => bench(&args),
+        "profile" => profile_cmd(&args),
+        "preview" => preview(&args),
         "send" => send(&args),
         "-h" | "--help" | "help" => {
             usage();
@@ -579,8 +585,138 @@ fn bench(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn send(args: &[String]) -> Result<()> {
-    let payload = match arg_value(args, "--hex") {
+fn profile_store(args: &[String]) -> Store {
+    let dir = arg_value(args, "--dir")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(Store::default_dir);
+    Store::new(dir)
+}
+
+fn profile_name(args: &[String], fallback: &str) -> String {
+    arg_value(args, "--name").unwrap_or_else(|| fallback.to_string())
+}
+
+fn image_summary(spec: &ImageSpec) -> String {
+    match spec {
+        ImageSpec::Color { color } => format!("colour {color}"),
+        ImageSpec::Text { text, .. } => format!("text {text:?}"),
+        ImageSpec::File { path } => format!("file {path}"),
+        ImageSpec::Icon { name, .. } => format!("icon {name}"),
+    }
+}
+
+fn profile_cmd(args: &[String]) -> Result<()> {
+    let sub = args.get(1).map(|s| s.as_str()).unwrap_or("list");
+    let store = profile_store(args);
+    let map = |e: streamdock_store::StoreError| Error::Message(e.to_string());
+
+    match sub {
+        "list" => {
+            let names = store.list().map_err(map)?;
+            if names.is_empty() {
+                println!("no profiles in {}", store.dir().display());
+                println!("create one with: streamdock profile init");
+                return Ok(());
+            }
+            for name in names {
+                println!("{name}");
+            }
+        }
+        "init" => {
+            let name = profile_name(args, "Default");
+            let mut profile = Profile::starter();
+            profile.name = name.clone();
+            store.save(&profile).map_err(map)?;
+            println!("wrote {}", store.path_for(&name).map_err(map)?.display());
+        }
+        "demo" => {
+            let name = profile_name(args, "Demo");
+            let mut profile = Profile::demo();
+            profile.name = name.clone();
+            store.save(&profile).map_err(map)?;
+            println!("wrote {}", store.path_for(&name).map_err(map)?.display());
+            println!("run: streamdockd --profile {name}");
+        }
+        "show" | "validate" => {
+            let name = profile_name(args, "Default");
+            let profile = store.load(&name).map_err(map)?;
+            println!(
+                "profile {} (version {}) pid={} layout={}",
+                profile.name, profile.version, profile.device.pid, profile.device.layout
+            );
+            if sub == "validate" {
+                println!("valid: {} pages", profile.pages.len());
+                return Ok(());
+            }
+            for page in &profile.pages {
+                println!("  page {}: {} keys", page.name, page.keys.len());
+                for (key, config) in &page.keys {
+                    let mut parts = Vec::new();
+                    if let Some(label) = &config.label {
+                        parts.push(format!("label {label:?}"));
+                    }
+                    if let Some(image) = &config.image {
+                        parts.push(image_summary(image));
+                    }
+                    if !config.actions.is_empty() {
+                        let list: Vec<String> =
+                            config.actions.iter().map(Action::describe).collect();
+                        parts.push(list.join(", "));
+                    }
+                    if parts.is_empty() {
+                        continue;
+                    }
+                    println!("    key {key}: {}", parts.join(" | "));
+                }
+            }
+        }
+        other => {
+            return Err(Error::Message(format!("unknown profile command: {other}")));
+        }
+    }
+
+    Ok(())
+}
+
+/// Write a picture of one page, so a user can check a profile without the panel.
+fn preview(args: &[String]) -> Result<()> {
+    let store = profile_store(args);
+    let name = profile_name(args, "Default");
+    let profile = store
+        .load(&name)
+        .map_err(|e| Error::Message(e.to_string()))?;
+
+    let page_number: usize = arg_value(args, "--page")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    if page_number == 0 || page_number > profile.pages.len() {
+        return Err(Error::Message(format!(
+            "--page must be 1..={}",
+            profile.pages.len()
+        )));
+    }
+    let page = &profile.pages[page_number - 1];
+
+    let sheet = streamdock_render::contact_sheet(page).map_err(Error::Message)?;
+    let jpeg = image::encode_quality(&sheet, 90).map_err(Error::Message)?;
+
+    let out = arg_value(args, "--out").unwrap_or_else(|| "profile-preview.jpg".to_string());
+    std::fs::write(&out, &jpeg)
+        .map_err(|e| Error::Message(format!("cannot write {out}: {e}")))?;
+
+    println!(
+        "{} page {} \"{}\": {}x{} -> {out} ({} bytes)",
+        profile.name,
+        page_number,
+        page.name,
+        sheet.width,
+        sheet.height,
+        jpeg.len()
+    );
+    Ok(())
+}
+
+fn send(args: &[String]) -> Result<()> {    let payload = match arg_value(args, "--hex") {
         Some(v) => proto::parse_hex(&v).map_err(Error::Message)?,
         None => return Err(Error::Message("send needs --hex".into())),
     };

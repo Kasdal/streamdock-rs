@@ -5,6 +5,7 @@
 //! rotation on the real panel. It needs no font file and no extra crate.
 
 use crate::image::Rgb;
+use crate::text;
 
 /// Background colour of a test tile.
 const BACKGROUND: [u8; 3] = [24, 24, 28];
@@ -146,6 +147,115 @@ pub fn noise_tile(size: (u16, u16), seed: u32) -> Rgb {
     }
 }
 
+/// One tile with wrapped, centred text.
+///
+/// The text uses the built in 5x7 font. Lowercase becomes uppercase. A
+/// character that the font does not have is skipped, but its cell is kept.
+pub fn label_tile(
+    text: &str,
+    size: (u16, u16),
+    background: [u8; 3],
+    foreground: [u8; 3],
+) -> Rgb {
+    let scale = fit_scale(text, size.0 as usize, size.1 as usize);
+    label_tile_scaled(text, size, background, foreground, scale)
+}
+
+/// Pixel margin kept free on both sides of a label.
+pub const SIDE_MARGIN: usize = 8;
+
+/// One tile with text at a chosen glyph scale.
+///
+/// Use the same scale for every key on a page, so `1` and `10` look the same
+/// size. If the text does not fit at `scale`, it shrinks to the largest scale
+/// that does.
+pub fn label_tile_scaled(
+    text: &str,
+    size: (u16, u16),
+    background: [u8; 3],
+    foreground: [u8; 3],
+    scale: usize,
+) -> Rgb {
+    let (w, h) = (size.0 as usize, size.1 as usize);
+    let mut data = vec![0u8; w * h * 3];
+    for pixel in data.chunks_exact_mut(3) {
+        pixel.copy_from_slice(&background);
+    }
+
+    let fit = fit_scale(text, w, h);
+    let scale = scale.clamp(1, fit);
+    let usable_w = w.saturating_sub(2 * SIDE_MARGIN);
+    let max_chars = (usable_w / ((text::WIDTH + 1) * scale)).max(1);
+    let lines = text::wrap(text, max_chars);
+
+    let line_h = text::HEIGHT * scale;
+    let gap = scale;
+    let total_h = lines.len() * line_h + lines.len().saturating_sub(1) * gap;
+    let mut y = (h.saturating_sub(total_h)) / 2;
+
+    for line in &lines {
+        let line_w = line_width(line, scale);
+        let mut x = (w.saturating_sub(line_w)) / 2;
+        for ch in line.chars() {
+            if let Some(glyph) = text::glyph(ch) {
+                for (row, bits) in glyph.iter().enumerate() {
+                    for col in 0..text::WIDTH {
+                        if bits & (1 << (text::WIDTH - 1 - col)) != 0 {
+                            fill_rect(
+                                &mut data,
+                                w,
+                                x + col * scale,
+                                y + row * scale,
+                                scale,
+                                scale,
+                                &foreground,
+                            );
+                        }
+                    }
+                }
+            }
+            x += (text::WIDTH + 1) * scale;
+        }
+        y += line_h + gap;
+    }
+
+    Rgb {
+        width: size.0,
+        height: size.1,
+        data,
+    }
+}
+
+/// Width of one line of text in pixels.
+fn line_width(line: &str, scale: usize) -> usize {
+    let chars = line.chars().count();
+    if chars == 0 {
+        return 0;
+    }
+    chars * (text::WIDTH + 1) * scale - scale
+}
+
+/// Largest glyph scale that fits this text in the tile.
+///
+/// The text stays on one line, unless it holds an explicit newline. A long
+/// label shrinks instead of wrapping, because a wrapped two character line is
+/// hard to read on a key.
+pub fn fit_scale(text: &str, w: usize, h: usize) -> usize {
+    let max_scale = (h / (text::HEIGHT + 1)).max(1);
+    let lines: Vec<&str> = text.split('\n').collect();
+    let longest = lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(1)
+        .max(1);
+
+    let by_width = (w.saturating_sub(2 * SIDE_MARGIN)) / ((text::WIDTH + 1) * longest);
+    let by_height = h / (lines.len().max(1) * (text::HEIGHT + 1));
+
+    by_width.min(by_height).min(max_scale).max(1)
+}
+
 /// Fill a rectangle. Coordinates outside the image are clipped.
 fn fill_rect(
     data: &mut [u8],
@@ -220,13 +330,18 @@ mod tests {
 
     /// Height of the digit block in pixels.
     fn digit_height(tile: &Rgb) -> usize {
+        text_height(tile, DIGIT)
+    }
+
+    /// Height of the pixels of one colour in pixels.
+    fn text_height(tile: &Rgb, colour: [u8; 3]) -> usize {
         let w = tile.width as usize;
         let h = tile.height as usize;
         let rows: Vec<usize> = (0..h)
             .filter(|&y| {
                 (0..w).any(|x| {
                     let at = (y * w + x) * 3;
-                    tile.data[at..at + 3] == DIGIT
+                    tile.data[at..at + 3] == colour
                 })
             })
             .collect();
@@ -255,5 +370,104 @@ mod tests {
         assert_eq!(tile.pixel(1, 40), [255, 255, 255]);
         assert_eq!(tile.pixel(78, 40), [255, 255, 255]);
         assert_eq!(tile.pixel(40, 40), BACKGROUND);
+    }
+
+    #[test]
+    fn label_tile_draws_text() {
+        let tile = label_tile("MUTE", (96, 96), [0, 0, 0], [255, 255, 255]);
+        assert_eq!((tile.width, tile.height), (96, 96));
+        let lit = tile
+            .data
+            .chunks_exact(3)
+            .filter(|p| *p == [255, 255, 255])
+            .count();
+        assert!(lit > 50, "only {lit} lit pixels");
+    }
+
+    #[test]
+    fn an_empty_label_is_the_background() {
+        let tile = label_tile("", (96, 96), [10, 20, 30], [255, 255, 255]);
+        assert!(tile.data.chunks_exact(3).all(|p| p == [10, 20, 30]));
+    }
+
+    #[test]
+    fn a_long_label_still_fits_the_tile() {
+        let tile = label_tile(
+            "a rather long label that must wrap and shrink",
+            (96, 96),
+            [0, 0, 0],
+            [255, 255, 255],
+        );
+        assert_eq!((tile.width, tile.height), (96, 96));
+        // Every lit pixel is inside the tile.
+        assert_eq!(tile.data.len(), 96 * 96 * 3);
+        let lit = tile.data.chunks_exact(3).filter(|p| *p == [255, 255, 255]).count();
+        assert!(lit > 50);
+    }
+
+    #[test]
+    fn text_is_centred() {
+        let tile = label_tile("I", (96, 96), [0, 0, 0], [255, 255, 255]);
+        let w = 96usize;
+        let mut min_x = w;
+        let mut max_x = 0;
+        for y in 0..96 {
+            for x in 0..w {
+                if tile.pixel(x as u16, y as u16) == [255, 255, 255] {
+                    min_x = min_x.min(x);
+                    max_x = max_x.max(x);
+                }
+            }
+        }
+        let left = min_x;
+        let right = w - 1 - max_x;
+        assert!((left as isize - right as isize).abs() <= 1, "left {left} right {right}");
+    }
+
+    #[test]
+    fn a_short_label_stays_on_one_line() {
+        let scale = fit_scale("S15", 96, 96);
+        assert!(scale >= 4, "scale {scale}");
+        let tile = label_tile("S15", (96, 96), [0, 0, 0], [255, 255, 255]);
+        assert_eq!(text_height(&tile, [255, 255, 255]), text::HEIGHT * scale);
+    }
+
+    #[test]
+    fn a_long_label_shrinks_to_fit() {
+        let text = "A LONG LABEL";
+        let scale = fit_scale(text, 96, 96);
+        let tile = label_tile(text, (96, 96), [0, 0, 0], [255, 255, 255]);
+        assert_eq!(text_height(&tile, [255, 255, 255]), text::HEIGHT * scale);
+        // The text is narrower than the tile.
+        let w = 96usize;
+        let mut min_x = w;
+        let mut max_x = 0;
+        for y in 0..96 {
+            for x in 0..w {
+                if tile.pixel(x as u16, y as u16) == [255, 255, 255] {
+                    min_x = min_x.min(x);
+                    max_x = max_x.max(x);
+                }
+            }
+        }
+        assert!(max_x < w, "text runs off the tile");
+        assert!(min_x > 0 || max_x > 0);
+    }
+
+    #[test]
+    fn a_newline_makes_two_lines() {
+        let tile = label_tile("A\nB", (96, 96), [0, 0, 0], [255, 255, 255]);
+        let h = text_height(&tile, [255, 255, 255]);
+        let scale = fit_scale("A\nB", 96, 96);
+        assert!(h > text::HEIGHT * scale);
+    }
+
+    #[test]
+    fn noise_is_deterministic() {
+        let a = noise_tile((32, 32), 7);
+        let b = noise_tile((32, 32), 7);
+        let c = noise_tile((32, 32), 8);
+        assert_eq!(a.data, b.data);
+        assert_ne!(a.data, c.data);
     }
 }

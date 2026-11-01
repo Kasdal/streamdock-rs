@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/cli"]
+members = ["crates/core", "crates/store", "crates/render", "crates/actions", "crates/daemon", "crates/cli"]
 resolver = "2"
 
 [workspace.package]
@@ -11,6 +11,8 @@ repository = "https://example.invalid/streamdock-rs"
 [workspace.dependencies]
 jpeg-decoder = "0.3"
 jpeg-encoder = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
@@ -19,6 +21,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
     "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Console",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [profile.release]

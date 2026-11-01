@@ -1,0 +1,10 @@
+[package]
+name = "streamdock-actions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Action engine: hotkeys, text, media keys, launch and multi actions"
+
+[dependencies]
+streamdock-store = { path = "../store" }
+windows-sys.workspace = true

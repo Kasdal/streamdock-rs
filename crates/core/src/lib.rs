@@ -27,6 +27,7 @@ pub mod image;
 pub mod model;
 pub mod proto;
 pub mod session;
+pub mod text;
 pub mod tile;
 
 pub use device::{Device, Poll};

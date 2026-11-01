@@ -181,17 +181,26 @@ orientation, no mirroring.
 | `crates/core/src/proto.rs` | Report framing, command words, key decode, hex helpers |
 | `crates/core/src/model.rs` | Key table, button and display split, image sizes, rotation |
 | `crates/core/src/image.rs` | JPEG decode, rotate, scale, crop, encode under the limit |
-| `crates/core/src/tile.rs` | Test tile renderer: numbers, frames, noise |
+| `crates/core/src/text.rs` | 5x7 bitmap font and word wrap |
+| `crates/core/src/tile.rs` | Tile renderer: numbers, labels, frames, noise |
 | `crates/core/src/device.rs` | High level `Device`: session, commands, image retry, events |
 | `crates/core/src/session.rs` | Reconnect and hot plug over `Device` |
 | `crates/core/src/error.rs` | Error type |
+| `crates/store/src/profile.rs` | Profile, page, key, image and action model, validation |
+| `crates/store/src/file_store.rs` | One JSON file per profile, atomic save |
+| `crates/render/src/lib.rs` | Key tiles from a profile, contact sheet |
+| `crates/actions/src/lib.rs` | Hotkey, text, media, launch, multi, page actions |
+| `crates/daemon/src/main.rs` | `streamdockd`: paint, poll, act, repaint |
+| `crates/daemon/src/single.rs` | Named mutex, one daemon per machine |
 | `crates/cli/src/main.rs` | Command line and command handlers |
 
 Commands: `list`, `desc`, `init`, `watch`, `capture`, `brightness`, `led`,
-`clear`, `image`, `pattern`, `probe`, `bench`, `send`.
+`clear`, `image`, `pattern`, `probe`, `bench`, `profile`, `preview`, `send`.
 
 The crate is a workspace since M1. `streamdock-core` holds the protocol and
-the device. `streamdock` is the binary.
+the device. `streamdock-store` holds the profile model. `streamdock-render`
+draws tiles. `streamdock-actions` injects input. `streamdockd` is the daemon.
+`streamdock` is the command line tool.
 
 ## 8. Build
 
@@ -489,7 +498,7 @@ Measured requirement: rotate by 270 degrees at the end, not at the start.
 | --- | --- | --- |
 | M0 (done) | Protocol, CLI, hardware verification | Keys, images, brightness tested |
 | M1 (done) | Split into `crates/core`, add reconnect and hot plug, add unit tests | Unplug and replug recovers with no restart |
-| M2 | Daemon, IPC, profile store, action engine for hotkey, text, launch, multi | Keys act while the UI is closed |
+| M2 (done without IPC) | Daemon, profile store, action engine for hotkey, text, launch, multi | Keys act while the UI is closed |
 | M3 | Tauri UI with grid, key editor, drag and drop, live preview | A user builds a 15 key page without a CLI |
 | M4 | Renderer with text, SVG, GIF, icon crop, themes, import and export | A page with icons and one animation runs |
 | M5 | Per application profiles, HTTP actions, plugin host | A profile switches when the user changes application |
@@ -573,4 +582,57 @@ Two more notes for the next session:
    encoder switches sampling at 90. Keep this in mind when you tune quality.
 2. `probe --test image-limit --qualities ... [--pause MS]` is the tool for
    more image tests. It sends the same noise tile to keys 1..N.
+
+## 20. Session 2 part 2: M2 daemon, store and actions
+
+Date: 2026-11-01. M2 is done apart from the IPC channel. The IPC channel moves
+to M3, because the UI is the first client that needs it.
+
+New crates:
+
+| Crate | Content |
+| --- | --- |
+| `streamdock-store` | Profile, page, key, image and action model. One JSON file per profile. Atomic save. Validation. |
+| `streamdock-render` | Tiles from a profile: colour, text, image file. One text scale per page. Contact sheet. |
+| `streamdock-actions` | Hotkey, text, media, launch, multi, page, brightness and command actions. |
+| `streamdockd` | Owns the panel. Paints a page, polls keys, runs actions, repaints, reconnects, blanks on exit. |
+| `streamdock` | Added `profile list/init/demo/show/validate` and `preview`. |
+
+Measured on hardware:
+
+| Test | Result |
+| --- | --- |
+| First paint of 18 keys | 235 ms after `panel connected` |
+| Page switch repaint | 20 ms from the key report |
+| Single instance guard | The second `streamdockd` exits with code 1 |
+| Blank on exit | Keys clear after the stop |
+| Label size, whole page | One scale for every label. Confirmed "all even". |
+| Reconnect repaint | The daemon repaints after `Connected` |
+
+Design decisions:
+
+1. The renderer picks one glyph scale for a whole page, so `1` and `10` match.
+   The scale is capped at 6 and the text keeps an 8 pixel side margin.
+2. A render fault draws a red `ERR` tile, so a broken image file does not
+   leave a stale key.
+3. `page_scale` ignores keys without text, so a photo key does not shrink the
+   labels.
+4. The daemon runs the actions of a press only. It ignores the release, so an
+   action fires once.
+5. `Action::Command` runs a program. The daemon accepts it because the profile
+   is user data. A release build must ask for an explicit opt in first.
+
+Open work that this session added:
+
+1. Test hotkey and text injection in a real application. The key names and the
+   input records are unit tested only.
+2. Add the IPC channel: loopback socket, token file, JSON events and commands.
+3. Add a tray icon and autostart. Both belong to the daemon.
+4. Cache encoded tiles by the hash of the key description. A repaint now
+   re-renders and re-encodes all 18 keys.
+5. Watch the profile file for changes, so `streamdock profile` edits show
+   without a daemon restart.
+6. Send `CONNECT` on a timer even while the daemon paints. A long repaint
+   blocks the poll loop, but 18 keys take 235 ms, so this is not a problem
+   today. An animation will need a worker thread.
 

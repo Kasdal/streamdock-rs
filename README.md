@@ -15,7 +15,8 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Image upload | verified on hardware |
 | Image rotation | measured on hardware: 270 degrees |
 | Reconnect after unplug | verified on hardware |
-| Unit tests | 39 tests, no device needed |
+| Daemon with actions | verified on hardware: page switch, repaint |
+| Unit tests | 101 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -92,6 +93,10 @@ The side strip has no buttons and sends no key event.
 | Path | Content |
 | --- | --- |
 | `crates/core` | protocol, HID handle, image pipeline, reconnect (`streamdock-core`) |
+| `crates/store` | profile model and JSON store (`streamdock-store`) |
+| `crates/render` | key tile renderer: colour, text, image files (`streamdock-render`) |
+| `crates/actions` | hotkey, text, media, launch, multi actions (`streamdock-actions`) |
+| `crates/daemon` | the `streamdockd` binary |
 | `crates/cli` | the `streamdock` binary |
 | `handoff/HANDOFF.md` | session record and the product plan |
 | `installer-analysis.md` | static analysis of the vendor installer |
@@ -114,6 +119,72 @@ if let Poll::Event(e) = device.poll_event(Duration::from_millis(200))? {
 `Session` adds reconnect. It owns at most one `Device`.
 A failed call drops the handle, and the next poll reopens the panel.
 Reopen tries are limited to one every 500 ms.
+
+## Daemon
+
+`streamdockd` owns the device and runs the profile while no window is open.
+
+```powershell
+streamdock profile demo
+streamdockd --profile Demo
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--profile NAME` | profile to load, default `Default` |
+| `--dir PATH` | profile folder, default `%LOCALAPPDATA%\StreamDock\profiles` |
+| `--seconds N` | stop after N seconds |
+| `--no-blank` | keep the keys on exit |
+
+The daemon does these steps:
+
+1. Take a named mutex, so a second copy exits with an error.
+2. Load the profile. A missing file is created as a starter profile.
+3. Open the panel and start the session.
+4. Paint all 18 keys. The side strip is a display, so it takes a tile too.
+5. Poll for key events with a heartbeat.
+6. Run the actions of a pressed key in order.
+7. Repaint the page after a page switch or a reconnect.
+8. Clear the keys on exit, unless `--no-blank` is set.
+
+Measured: a page switch repaints 18 keys in about 20 ms.
+
+`streamdock preview --name Demo --out sheet.jpg` writes a picture of one page
+without the panel. Use it to check a profile on any machine.
+
+## Profiles
+
+One profile is one JSON file. A page holds keys by number.
+
+```json
+{
+  "version": 1,
+  "name": "Default",
+  "device": { "pid": "0x3010", "layout": "akp153e" },
+  "pages": [
+    {
+      "name": "Main",
+      "keys": {
+        "1": {
+          "label": "Mute",
+          "actions": [ { "type": "hotkey", "keys": ["ctrl", "shift", "m"] } ]
+        },
+        "2": {
+          "image": { "kind": "text", "text": "SCENE 2", "background": "#14375c" },
+          "actions": [ { "type": "page", "target": "Second" } ]
+        }
+      }
+    }
+  ]
+}
+```
+
+Image kinds: `color`, `text`, `file`, `icon` (the icon name is drawn as text
+until the icon library arrives in M4).
+
+Action types: `hotkey`, `text`, `media`, `launch`, `multi`, `page`,
+`brightness`, `command`. A `command` action runs a program, so a profile with
+one needs an explicit opt in before a release build accepts it.
 
 ## Build
 
@@ -144,6 +215,8 @@ streamdock.exe image --key 1 --file photo.jpg [--fit crop|stretch|none] [--rotat
 streamdock.exe pattern
 streamdock.exe probe --test strip-size|strip-span|image-limit
 streamdock.exe bench --count 30
+streamdock.exe profile <list|init|demo|show|validate> [--name N]
+streamdock.exe preview [--name N] [--page N] [--out FILE]
 streamdock.exe send --hex 4352540000444953 --i-understand
 ```
 
@@ -164,12 +237,21 @@ streamdock.exe send --hex 4352540000444953 --i-understand
   It shows the key order and the rotation.
 * `probe` answers one hardware question. See `handoff/HANDOFF.md`.
 * `bench` measures the image transfer rate.
+* `profile` lists, creates, shows and validates profiles. `profile demo`
+  writes a two page profile for a daemon test.
+* `preview` writes a picture of one page as a JPEG, without the panel.
 * `send` writes one raw payload. It refuses to write without `--i-understand`.
 
 ## Limits
 
 The key IDs of keys 1 to 15 match the reports that this unit sends.
 The side strip has no buttons, so keys 16 to 18 never send a key event.
+
+Hotkey and text injection use `SendInput`. The key names and the input records
+are unit tested, but no application has confirmed the injected input yet.
+
+A `command` action runs a program. A profile that holds one is user data, so
+the daemon does not ask for confirmation yet. Do this before a release.
 
 The vendor application was never installed or executed.
 The installer payload is not decompressed.
