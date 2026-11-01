@@ -19,7 +19,8 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Browser editor | verified on hardware: edit a key, panel updates |
 | Drag and drop | verified on hardware: drop a PNG on a key |
 | Tray icon and autostart | verified on hardware: menu, quit, Run key |
-| Unit tests | 120 tests, no device needed |
+| Undo and save conflict | verified on hardware: undo, warning on a stale save |
+| Unit tests | 123 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -154,6 +155,13 @@ runtime.
 The grid shows the real tile that the daemon draws, not an approximation.
 Drag a JPEG or PNG file onto a key to set its image. The file is copied into
 the `assets` folder next to the profile, so the profile stays portable.
+
+The Undo button restores the profile from before the last save. Ctrl+Z does
+the same when the focus is not in a text field.
+
+Every save carries the revision that the editor started from. If another
+window saved first, the daemon refuses the change with a conflict. The editor
+then warns, and a second press of Apply key overwrites on purpose.
 
 The socket binds to `127.0.0.1` only. Every request needs the token.
 A second daemon exits, because a named mutex guards the device.

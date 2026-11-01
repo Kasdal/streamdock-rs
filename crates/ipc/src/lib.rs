@@ -50,6 +50,8 @@ pub struct State {
     pub page: usize,
     pub page_name: String,
     pub brightness: Option<u8>,
+    /// Bumped on every profile change, so a stale save can be refused.
+    pub rev: u64,
     pub profile: Profile,
 }
 
@@ -66,6 +68,7 @@ impl State {
             page,
             page_name,
             brightness: None,
+            rev: 0,
             profile,
         }
     }
@@ -78,7 +81,7 @@ impl State {
         }
     }
 
-    /// Replace the profile and keep the page in range.
+    /// Replace the profile and keep the page in range. This bumps `rev`.
     pub fn set_profile(&mut self, profile: Profile) {
         self.profile = profile;
         if self.page >= self.profile.pages.len() {
@@ -90,6 +93,7 @@ impl State {
             .get(self.page)
             .map(|p| p.name.clone())
             .unwrap_or_default();
+        self.rev += 1;
     }
 }
 
@@ -118,19 +122,34 @@ impl Shared {
     }
 }
 
-/// Answer channel for one command.
-pub type Reply = Sender<Result<State, String>>;
+/// Answer from the daemon for one command.
+pub enum Reply {
+    /// The change was applied.
+    Ok(State),
+    /// Another client changed the profile first. Carries the current state.
+    Conflict(State),
+    /// The change was refused.
+    Error(String),
+}
+
+/// Sender for one reply.
+pub type ReplySender = Sender<Reply>;
 
 /// A change that only the daemon thread can apply.
 pub enum Command {
     /// Replace the profile, save it and repaint.
-    Save { profile: Profile, reply: Reply },
+    Save {
+        profile: Profile,
+        /// Revision that the client started from. `None` overwrites.
+        expected_rev: Option<u64>,
+        reply: ReplySender,
+    },
     /// Show another page by name.
-    SwitchPage { target: String, reply: Reply },
+    SwitchPage { target: String, reply: ReplySender },
     /// Set the panel brightness.
-    Brightness { value: u8, reply: Reply },
+    Brightness { value: u8, reply: ReplySender },
     /// Read the profile from disk again.
-    Reload { reply: Reply },
+    Reload { reply: ReplySender },
 }
 
 /// A running server.
@@ -192,6 +211,7 @@ pub fn runtime_path() -> PathBuf {
     base.join("StreamDock").join("runtime.json")
 }
 
+#[derive(Clone)]
 struct Context {
     shared: Arc<Shared>,
     commands: Sender<Command>,
@@ -270,7 +290,14 @@ fn route(context: &Context, request: &Request) -> Response {
                 Ok(profile) => profile,
                 Err(e) => return Response::message(400, format!("bad profile JSON: {e}")),
             };
-            roundtrip(context, |reply| Command::Save { profile, reply })
+            let expected_rev = request
+                .header("x-rev")
+                .and_then(|value| value.trim().parse::<u64>().ok());
+            roundtrip(context, |reply| Command::Save {
+                profile,
+                expected_rev,
+                reply,
+            })
         }
         ("POST", "/api/page") => {
             if !api_token_ok(context, request) {
@@ -465,14 +492,18 @@ fn json_state(state: &State) -> Response {
     }
 }
 
-fn roundtrip(context: &Context, build: impl FnOnce(Reply) -> Command) -> Response {
+fn roundtrip(context: &Context, build: impl FnOnce(ReplySender) -> Command) -> Response {
     let (reply, answer) = channel();
     if context.commands.send(build(reply)).is_err() {
         return Response::message(503, "the daemon is not running");
     }
     match answer.recv_timeout(REPLY_TIMEOUT) {
-        Ok(Ok(state)) => json_state(&state),
-        Ok(Err(message)) => Response::message(400, message),
+        Ok(Reply::Ok(state)) => json_state(&state),
+        Ok(Reply::Conflict(state)) => match serde_json::to_string(&state) {
+            Ok(text) => Response::json(409, text),
+            Err(e) => Response::message(500, format!("cannot encode state: {e}")),
+        },
+        Ok(Reply::Error(message)) => Response::message(400, message),
         Err(_) => Response::message(500, "the daemon did not answer"),
     }
 }
@@ -531,6 +562,20 @@ mod tests {
             headers: Vec::new(),
             body: Vec::new(),
         }
+    }
+
+    fn context_with_commands() -> (Context, std::sync::mpsc::Receiver<Command>) {
+        let state = State::new(Profile::starter(), 0);
+        let (commands, receiver) = channel();
+        (
+            Context {
+                shared: Shared::new(state),
+                commands,
+                token: "abc123".to_string(),
+                base: PathBuf::from("."),
+            },
+            receiver,
+        )
     }
 
     #[test]
@@ -621,5 +666,80 @@ mod tests {
         state.set_profile(Profile::starter());
         assert_eq!(state.page, 0);
         assert_eq!(state.page_name, "Main");
+    }
+
+    #[test]
+    fn a_profile_change_bumps_the_revision() {
+        let mut state = State::new(Profile::starter(), 0);
+        assert_eq!(state.rev, 0);
+        state.set_profile(Profile::demo());
+        assert_eq!(state.rev, 1);
+        state.set_page(1);
+        assert_eq!(state.rev, 1);
+        state.set_profile(Profile::starter());
+        assert_eq!(state.rev, 2);
+    }
+
+    #[test]
+    fn a_stale_save_gets_a_conflict_and_the_current_state() {
+        let (context, commands) = context_with_commands();
+        let mut request = request("PUT", "/api/profile");
+        request
+            .headers
+            .push(("x-token".to_string(), "abc123".to_string()));
+        request
+            .headers
+            .push(("x-rev".to_string(), "3".to_string()));
+        request.body = serde_json::to_vec(&Profile::starter()).expect("json");
+
+        let worker = context.clone();
+        let handle = std::thread::spawn(move || route(&worker, &request));
+
+        match commands.recv().expect("a save command") {
+            Command::Save {
+                expected_rev,
+                reply,
+                ..
+            } => {
+                assert_eq!(expected_rev, Some(3));
+                let current = State::new(Profile::starter(), 0);
+                let _ = reply.send(Reply::Conflict(current));
+            }
+            _ => panic!("expected a save command"),
+        }
+
+        let response = handle.join().expect("thread");
+        assert_eq!(response.status, 409);
+        let text = String::from_utf8(response.body).expect("utf8");
+        assert!(text.contains("\"rev\""));
+    }
+
+    #[test]
+    fn a_save_without_a_revision_is_accepted() {
+        let (context, commands) = context_with_commands();
+        let mut request = request("PUT", "/api/profile");
+        request
+            .headers
+            .push(("x-token".to_string(), "abc123".to_string()));
+        request.body = serde_json::to_vec(&Profile::demo()).expect("json");
+
+        let worker = context.clone();
+        let handle = std::thread::spawn(move || route(&worker, &request));
+
+        match commands.recv().expect("a save command") {
+            Command::Save {
+                expected_rev,
+                reply,
+                profile,
+            } => {
+                assert_eq!(expected_rev, None);
+                assert_eq!(profile.name, "Demo");
+                let _ = reply.send(Reply::Ok(State::new(profile, 0)));
+            }
+            _ => panic!("expected a save command"),
+        }
+
+        let response = handle.join().expect("thread");
+        assert_eq!(response.status, 200);
     }
 }

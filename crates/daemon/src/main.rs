@@ -272,13 +272,27 @@ fn handle_command(
     shared: &Arc<ipc::Shared>,
 ) {
     match command {
-        ipc::Command::Save { profile: next, reply } => {
+        ipc::Command::Save {
+            profile: next,
+            expected_rev,
+            reply,
+        } => {
+            if let Some(expected) = expected_rev {
+                let current = shared.snapshot().rev;
+                if expected != current {
+                    log(format!(
+                        "refused a stale save (client rev {expected}, current {current})"
+                    ));
+                    let _ = reply.send(ipc::Reply::Conflict(shared.snapshot()));
+                    return;
+                }
+            }
             if let Err(e) = next.validate() {
-                let _ = reply.send(Err(e));
+                let _ = reply.send(ipc::Reply::Error(e));
                 return;
             }
             if let Err(e) = store.save(&next) {
-                let _ = reply.send(Err(e.to_string()));
+                let _ = reply.send(ipc::Reply::Error(e.to_string()));
                 return;
             }
             *profile = next;
@@ -291,7 +305,7 @@ fn handle_command(
                 state.set_profile(profile.clone());
                 state.set_page(*page);
             });
-            let _ = reply.send(Ok(shared.snapshot()));
+            let _ = reply.send(ipc::Reply::Ok(shared.snapshot()));
         }
         ipc::Command::SwitchPage { target, reply } => match profile.page_index(&target) {
             Some(index) => {
@@ -299,10 +313,10 @@ fn handle_command(
                 log(format!("page {} from the editor", profile.pages[index].name));
                 paint_all(session, profile, *page, store.dir());
                 shared.update(|state| state.set_page(index));
-                let _ = reply.send(Ok(shared.snapshot()));
+                let _ = reply.send(ipc::Reply::Ok(shared.snapshot()));
             }
             None => {
-                let _ = reply.send(Err(format!("no page named {target:?}")));
+                let _ = reply.send(ipc::Reply::Error(format!("no page named {target:?}")));
             }
         },
         ipc::Command::Brightness { value, reply } => {
@@ -310,10 +324,10 @@ fn handle_command(
                 Ok(()) => {
                     log(format!("brightness {value} from the editor"));
                     shared.update(|state| state.brightness = Some(value));
-                    let _ = reply.send(Ok(shared.snapshot()));
+                    let _ = reply.send(ipc::Reply::Ok(shared.snapshot()));
                 }
                 Err(e) => {
-                    let _ = reply.send(Err(e.to_string()));
+                    let _ = reply.send(ipc::Reply::Error(e.to_string()));
                 }
             }
         }
@@ -329,10 +343,10 @@ fn handle_command(
                     state.set_profile(profile.clone());
                     state.set_page(*page);
                 });
-                let _ = reply.send(Ok(shared.snapshot()));
+                let _ = reply.send(ipc::Reply::Ok(shared.snapshot()));
             }
             Err(e) => {
-                let _ = reply.send(Err(e.to_string()));
+                let _ = reply.send(ipc::Reply::Error(e.to_string()));
             }
         },
     }

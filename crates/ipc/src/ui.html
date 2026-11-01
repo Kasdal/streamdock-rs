@@ -99,6 +99,7 @@
     cursor: pointer;
   }
   button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; border-color: var(--line); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #06101f; font-weight: 700; }
   .buttons { display: flex; gap: 8px; margin-top: 4px; }
   .hint { color: var(--dim); font-size: 12px; }
@@ -122,6 +123,7 @@
     <input id="brightness" type="range" min="0" max="100" value="60" style="width:140px">
     <span id="brightness-value">60</span>
   </span>
+  <button id="undo" disabled>Undo</button>
   <button id="reload">Reload profile</button>
 </header>
 
@@ -196,6 +198,9 @@ let state = null;
 let selected = 1;
 let tileVersion = Date.now();
 let lastSignature = null;
+let editRev = 0;
+let forceNext = false;
+const undoStack = [];
 
 const $ = (id) => document.getElementById(id);
 
@@ -209,7 +214,10 @@ async function api(path, options = {}) {
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch (e) { data = { error: text }; }
   if (!response.ok) {
-    throw new Error(data && data.error ? data.error : response.statusText);
+    const error = new Error(data && data.error ? data.error : response.statusText);
+    error.status = response.status;
+    error.payload = data;
+    throw error;
   }
   return data;
 }
@@ -317,11 +325,11 @@ async function dropImage(key, file) {
     const config = page.keys[String(key)] || {};
     config.image = { kind: "file", path: asset.path };
     page.keys[key] = config;
-    await saveProfile(profile, "image set on key " + key);
+    await saveProfile(profile, "image set on key " + key, state.rev);
     selected = key;
     fillEditor();
   } catch (e) {
-    message(e.message, "bad");
+    reportError(e);
   }
 }
 
@@ -353,6 +361,8 @@ function fillEditor() {
   $("f-icon").value = image && image.kind === "icon" ? image.name || "" : "";
   $("f-actions").value = JSON.stringify(config.actions || [], null, 2);
   updateKindRows();
+  editRev = state ? state.rev : 0;
+  forceNext = false;
   message("");
 }
 
@@ -384,14 +394,74 @@ function copyProfile() {
   return JSON.parse(JSON.stringify(state.profile));
 }
 
-async function saveProfile(profile, note) {
-  const next = await api("/api/profile", { method: "PUT", body: JSON.stringify(profile) });
+function pushUndo(profile) {
+  undoStack.push(JSON.parse(JSON.stringify(profile)));
+  if (undoStack.length > 30) undoStack.shift();
+  updateUndoButton();
+}
+
+function updateUndoButton() {
+  const button = $("undo");
+  if (!button) return;
+  button.disabled = undoStack.length === 0;
+  button.textContent = undoStack.length ? "Undo (" + undoStack.length + ")" : "Undo";
+}
+
+/// Turn a failure into a message. A 409 means another client saved first.
+function reportError(e) {
+  if (e.status === 409) {
+    forceNext = true;
+    message("Another window changed this profile. Press the button again to overwrite, or Reload profile to discard your change.", "bad");
+  } else {
+    message(e.message, "bad");
+  }
+}
+
+async function saveProfile(profile, note, rev) {
+  const before = state ? state.profile : null;
+  const headers = {};
+  if (!forceNext && typeof rev === "number") headers["X-Rev"] = String(rev);
+
+  const next = await api("/api/profile", {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(profile),
+  });
+
+  forceNext = false;
+  if (before) pushUndo(before);
   state = next;
+  editRev = next.rev;
   lastSignature = null;
   tileVersion = Date.now();
   drawTabs();
   drawGrid();
   message(note || "saved", "ok");
+}
+
+/// Restore the profile before the last save.
+async function undo() {
+  if (!undoStack.length) return;
+  const previous = undoStack.pop();
+  updateUndoButton();
+  try {
+    const next = await api("/api/profile", {
+      method: "PUT",
+      headers: { "X-Rev": String(state.rev) },
+      body: JSON.stringify(previous),
+    });
+    state = next;
+    editRev = next.rev;
+    forceNext = false;
+    lastSignature = null;
+    tileVersion = Date.now();
+    drawTabs();
+    drawGrid();
+    fillEditor();
+    message("undo applied", "ok");
+  } catch (e) {
+    reportError(e);
+  }
 }
 
 async function applyKey() {
@@ -416,9 +486,9 @@ async function applyKey() {
       if (actions.length) config.actions = actions;
       page.keys[key] = config;
     }
-    await saveProfile(profile, "key " + selected + " saved");
+    await saveProfile(profile, "key " + selected + " saved", editRev);
   } catch (e) {
-    message(e.message, "bad");
+    reportError(e);
   }
 }
 
@@ -426,10 +496,10 @@ async function clearKey() {
   try {
     const profile = copyProfile();
     delete profile.pages[state.page].keys[String(selected)];
-    await saveProfile(profile, "key " + selected + " cleared");
+    await saveProfile(profile, "key " + selected + " cleared", state.rev);
     fillEditor();
   } catch (e) {
-    message(e.message, "bad");
+    reportError(e);
   }
 }
 
@@ -485,8 +555,8 @@ async function addPage() {
     const profile = copyProfile();
     if (profile.pages.some((p) => p.name === name)) throw new Error("a page with that name exists");
     profile.pages.push({ name, keys: {} });
-    await saveProfile(profile, "page added");
-  } catch (e) { message(e.message, "bad"); }
+    await saveProfile(profile, "page added", state.rev);
+  } catch (e) { reportError(e); }
 }
 
 async function renamePage() {
@@ -498,8 +568,8 @@ async function renamePage() {
     const profile = copyProfile();
     if (profile.pages.some((p) => p.name === name)) throw new Error("a page with that name exists");
     profile.pages[state.page].name = name;
-    await saveProfile(profile, "page renamed");
-  } catch (e) { message(e.message, "bad"); }
+    await saveProfile(profile, "page renamed", state.rev);
+  } catch (e) { reportError(e); }
 }
 
 async function deletePage() {
@@ -510,9 +580,9 @@ async function deletePage() {
   try {
     const profile = copyProfile();
     profile.pages.splice(state.page, 1);
-    await saveProfile(profile, "page deleted");
+    await saveProfile(profile, "page deleted", state.rev);
     fillEditor();
-  } catch (e) { message(e.message, "bad"); }
+  } catch (e) { reportError(e); }
 }
 
 async function reloadProfile() {
@@ -530,11 +600,20 @@ async function reloadProfile() {
 $("f-kind").addEventListener("change", updateKindRows);
 $("apply").addEventListener("click", applyKey);
 $("clear").addEventListener("click", clearKey);
+$("undo").addEventListener("click", undo);
 $("page-add").addEventListener("click", addPage);
 $("page-rename").addEventListener("click", renamePage);
 $("page-delete").addEventListener("click", deletePage);
 $("reload").addEventListener("click", reloadProfile);
 $("brightness").addEventListener("change", (event) => setBrightness(event.target.value));
+
+document.addEventListener("keydown", (event) => {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
+  const tag = document.activeElement ? document.activeElement.tagName : "";
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  event.preventDefault();
+  undo();
+});
 
 (async function start() {
   try {

@@ -677,7 +677,7 @@ API:
 | --- | --- | --- |
 | GET | `/` | token in the query, serves the page |
 | GET | `/api/state` | none |
-| PUT | `/api/profile` | the whole profile as JSON |
+| PUT | `/api/profile` | the whole profile as JSON, `X-Rev` to refuse a stale save |
 | POST | `/api/page` | `{"name": "Main"}` or `{"index": 0}` |
 | POST | `/api/brightness` | `{"value": 70}` |
 | GET | `/api/tile` | token in the query, a JPEG of one upright tile |
@@ -703,7 +703,8 @@ Open work for the editor:
    copied to `assets` and becomes the key image.
 2. ~~Draw the real tile in the browser, not an approximation.~~ Closed. The
    grid loads `/api/tile`, which renders the same tile as the panel.
-3. Undo, and a warning when a second client saves over a change.
+3. ~~Undo, and a warning when a second client saves over a change.~~ Closed in
+   section 24.
 4. Show the render fault of a key in the grid.
 5. Add the strip key names to the grid labels.
 6. Keep the last known state when the daemon is offline, instead of a blank
@@ -779,4 +780,38 @@ Open work that this session added:
    flash an icon.
 4. Hide the console window in a release build. The current binary is a console
    program.
+
+## 24. Session 2 part 6: undo and save conflicts
+
+Date: 2026-11-01. Two editor safety features are now measured on hardware.
+
+| Test | Result |
+| --- | --- |
+| Undo after a key save | The panel returned to the previous label |
+| Ctrl+Z outside a text field | Same as the Undo button |
+| Two tabs, stale save | The second tab showed the conflict warning |
+| Second press of Apply | Overwrites on purpose |
+| Save without `X-Rev` | Accepted, so a force save still works |
+| Stale rev over HTTP | 409 with the current state, daemon logs the refusal |
+
+Design notes:
+
+1. `State.rev` counts profile changes. A page switch does not change it.
+2. The editor remembers the revision that it loaded the key editor with. A
+   save after another window changed the profile is refused.
+3. The daemon compares the revision, not the HTTP layer, so the check cannot
+   race with a paint.
+4. `Reply` is now an enum: `Ok(state)`, `Conflict(state)` and `Error(message)`.
+   The HTTP layer maps `Conflict` to 409 with the current state.
+5. A save without `X-Rev` overwrites. The editor uses that only after it shows
+   the warning and the user presses the button again.
+6. The undo stack keeps 30 profiles in the browser. Undo sends the previous
+   profile as a normal save, so it is checked and repainted like any change.
+7. The stack is in the page, not on disk. A reload of the page clears it.
+
+Open work that this session added:
+
+1. A merge view for a conflict, instead of reload or overwrite.
+2. Redo.
+3. Name the page and the key in the conflict message.
 
