@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.2.0"
+    [string]$Version = "0.3.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,10 +10,15 @@ $selfContained = "$env:USERPROFILE\.rustup\toolchains\stable-x86_64-pc-windows-g
 $env:Path = "$env:USERPROFILE\.cargo\bin;$mingw;$selfContained;$env:Path"
 
 Write-Host "Building Stream Dock $Version"
-cargo build --release
+# Cargo writes its progress to stderr. Windows PowerShell turns that into a
+# terminating error while $ErrorActionPreference is "Stop", so lower it here
+# and check the exit code instead.
+$ErrorActionPreference = "Continue"
+& cargo build --release 2>&1 | ForEach-Object { Write-Host $_ }
 if ($LASTEXITCODE -ne 0) {
     throw "cargo build failed"
 }
+$ErrorActionPreference = "Stop"
 
 $dist = "dist\StreamDock-$Version"
 if (Test-Path $dist) {

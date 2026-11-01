@@ -1,7 +1,7 @@
 param(
     [string]$Pfx = $env:STREAMDOCK_CERT,
     [string]$Password = $env:STREAMDOCK_CERT_PASSWORD,
-    [string]$Folder = "dist\StreamDock-0.2.0"
+    [string]$Folder = "dist\StreamDock-0.3.0"
 )
 
 $ErrorActionPreference = "Stop"

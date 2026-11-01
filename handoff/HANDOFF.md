@@ -1617,4 +1617,41 @@ Open work:
    place in one line. A little CSS would separate them.
 2. The text size applies to the whole strip, not to one slot.
 
+## 41. Session 3 part 7: version 0.3.0 and a fresh build
+
+Date: 2026-11-01. The version moved from 0.2.0 to 0.3.0 and everything was
+rebuilt.
+
+What the bump touched:
+
+| File | Change |
+| --- | --- |
+| `Cargo.toml` | workspace version |
+| `crates/desktop/Cargo.toml`, `tauri.conf.json` | window version, so the exe says 0.3.0 |
+| `build-release.ps1`, `build-nsis.ps1` | default version |
+| `packaging/install.ps1`, `sign.ps1`, `streamdock.nsi` | default version and paths |
+| `README.md` | the file names in the commands |
+
+`build-release.ps1` also got the stderr fix that `build-desktop.ps1` got in
+section 35: cargo writes its progress to stderr, and Windows PowerShell turns
+that into a terminating error while `$ErrorActionPreference` is `Stop`. The
+script now lowers that setting for the cargo call and checks the exit code.
+
+Results:
+
+| Build | Result |
+| --- | --- |
+| GNU workspace | built, 210 tests pass |
+| Desktop window | `streamdock-desktop.exe`, file version 0.3.0 |
+| Portable package | `dist\StreamDock-0.3.0.zip` |
+| Installer | `dist\StreamDock-0.3.0-setup.exe`, 7917301 bytes |
+
+The installer is larger than before: 7.9 MB against 5.7 MB. It now carries the
+desktop window, 9.8 MB before compression.
+
+Open work:
+
+1. `streamdockd.exe` and `streamdock.exe` have no version resource. Only the
+   window carries 0.3.0. Add it in the build scripts if a release needs it.
+
 

@@ -29,7 +29,7 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Profile export and import | verified: zip with the profile, assets and icons |
 | Editor export and import | verified over HTTP: download and upload |
 | Release package | verified: install and uninstall into a temp folder |
-| NSIS installer | verified: 5.7 MB setup, silent install and uninstall |
+| NSIS installer | verified: 7.9 MB setup with the window, silent install and uninstall |
 | Per-app profiles | verified on hardware: chrome.exe switched the profile |
 | HTTP actions | tested against a local server |
 | Plugin host | tested with a PowerShell plugin |
@@ -451,7 +451,7 @@ portable package plus a zip under `dist\`.
 
 ```powershell
 .\build-release.ps1
-.\dist\StreamDock-0.2.0\install.ps1
+.\dist\StreamDock-0.3.0\install.ps1
 ```
 
 `install.ps1` copies the program to `%LOCALAPPDATA%\StreamDock\bin`, adds the
@@ -462,12 +462,12 @@ keeps profiles when you pass `-KeepProfiles`.
 
 `build-nsis.ps1` builds a per-user NSIS installer from `packaging\streamdock.nsi`.
 It needs `makensis` in PATH or a portable copy with `-MakensisPath PATH`. The
-result is `dist\StreamDock-0.2.0-setup.exe`, about 5.7 MB. The installer needs
+result is `dist\StreamDock-0.3.0-setup.exe`, about 7.9 MB. The installer needs
 no administrator rights and writes an "Apps and features" entry.
 
 ```powershell
 .\build-nsis.ps1
-.\dist\StreamDock-0.2.0-setup.exe
+.\dist\StreamDock-0.3.0-setup.exe
 ```
 
 `sign.ps1` signs both binaries with `signtool`. Set `STREAMDOCK_CERT` to a

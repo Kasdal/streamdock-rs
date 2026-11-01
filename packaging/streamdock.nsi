@@ -1,8 +1,8 @@
 ; Stream Dock NSIS installer.
 ;
 ; Build it with build-nsis.ps1, or by hand:
-;   makensis /DVERSION=0.2.0 /DSRCDIR=C:\path\dist\StreamDock-0.2.0 ^
-;            /DOUTFILE=C:\path\dist\StreamDock-0.2.0-setup.exe streamdock.nsi
+;   makensis /DVERSION=0.3.0 /DSRCDIR=C:\path\dist\StreamDock-0.3.0 ^
+;            /DOUTFILE=C:\path\dist\StreamDock-0.3.0-setup.exe streamdock.nsi
 ;
 ; The installer is per user: no administrator rights, and the files go to
 ; %LOCALAPPDATA%. Uninstall keeps the profiles.
@@ -11,7 +11,7 @@ Unicode true
 !include "MUI2.nsh"
 
 !ifndef VERSION
-  !define VERSION "0.2.0"
+  !define VERSION "0.3.0"
 !endif
 !ifndef SRCDIR
   !define SRCDIR "..\dist\StreamDock-${VERSION}"
