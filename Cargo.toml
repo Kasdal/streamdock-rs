@@ -1,0 +1,23 @@
+[package]
+name = "streamdock"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal Rust controller for Stream Dock / MiraBox HID keypads"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+jpeg-decoder = "0.3"
+jpeg-encoder = "0.6"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Devices_HumanInterfaceDevice",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+] }
+
+[[bin]]
+name = "streamdock"
+path = "src/main.rs"
