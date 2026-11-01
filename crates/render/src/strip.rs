@@ -34,9 +34,13 @@ pub const BAR_HEIGHT: u16 = 14;
 pub const BAR_RADIUS: u16 = 4;
 
 /// Draw one strip image with the bands stacked from the top.
+///
+/// `scale` changes the text size. 1.0 is the normal size, 0.6 is small and
+/// 1.6 is large.
 pub fn strip(
     size: (u16, u16),
     bands: &[Band],
+    scale: f32,
     background: [u8; 3],
     foreground: [u8; 3],
 ) -> Rgb {
@@ -45,6 +49,7 @@ pub fn strip(
         return base;
     }
 
+    let scale = scale.clamp(0.4, 2.0);
     let width = size.0;
     let height = size.1;
     let band_height = height / bands.len() as u16;
@@ -60,14 +65,26 @@ pub fn strip(
             fill_rect(&mut base, 0, top, width, 1, &line);
         }
 
-        let label_height = (band_height as f32 * 0.16) as u16;
-        let value_height = (band_height as f32 * 0.36) as u16;
-        let subtitle_height = if band.subtitle.is_some() {
-            (band_height as f32 * 0.13) as u16
+        // The text size option moves the room between the text and the gaps,
+        // not only the font size, so a bigger setting really is bigger.
+        let bar_height = if band.percent.is_some() { BAR_HEIGHT } else { 0 };
+        let room = band_height.saturating_sub(bar_height + 3);
+        let mut label_height = (band_height as f32 * 0.16 * scale) as u16;
+        let mut value_height = (band_height as f32 * 0.36 * scale) as u16;
+        let mut subtitle_height = if band.subtitle.is_some() {
+            (band_height as f32 * 0.13 * scale) as u16
         } else {
             0
         };
-        let bar_height = if band.percent.is_some() { BAR_HEIGHT } else { 0 };
+
+        let text = label_height + value_height + subtitle_height;
+        if text > room && text > 0 {
+            let factor = room as f32 / text as f32;
+            label_height = (label_height as f32 * factor) as u16;
+            value_height = (value_height as f32 * factor) as u16;
+            subtitle_height = (subtitle_height as f32 * factor) as u16;
+        }
+
         let used = label_height + value_height + subtitle_height + bar_height;
         let pad = band_height.saturating_sub(used) / 3;
 
@@ -79,7 +96,7 @@ pub fn strip(
                 (width, label_height),
                 background,
                 dim,
-                (label_height as f32 * 0.85) as usize,
+                (label_height as f32 * 0.85 * scale) as usize,
             );
             blit(&mut base, &label, 0, y);
         }
@@ -90,7 +107,7 @@ pub fn strip(
             (width, value_height),
             background,
             band.colour,
-            (value_height as f32 * 0.95) as usize,
+            (value_height as f32 * 0.95 * scale) as usize,
         );
         blit(&mut base, &value, 0, y);
         y += value_height;
@@ -101,7 +118,7 @@ pub fn strip(
                 (width, subtitle_height),
                 background,
                 dim,
-                (subtitle_height as f32 * 0.85) as usize,
+                (subtitle_height as f32 * 0.85 * scale) as usize,
             );
             blit(&mut base, &line_tile, 0, y);
         }
@@ -224,7 +241,7 @@ mod tests {
     const SIZE: (u16, u16) = (96, 460);
 
     fn image(bands: &[Band]) -> Rgb {
-        strip(SIZE, bands, BG, FG)
+        strip(SIZE, bands, 1.0, BG, FG)
     }
 
     fn bar_rows(band: u16) -> u16 {
@@ -376,5 +393,33 @@ mod tests {
         }
         assert!(red_rows > 0, "the value text is drawn in the band colour");
         assert!(red_rows < 100, "no bar, so the colour stays in the text");
+    }
+
+    #[test]
+    fn a_bigger_text_scale_draws_more_pixels() {
+        let band = [Band {
+            label: "CPU",
+            value: "42%",
+            subtitle: None,
+            percent: None,
+            colour: RED,
+        }];
+        let small = strip(SIZE, &band, 0.7, BG, FG);
+        let normal = strip(SIZE, &band, 1.0, BG, FG);
+        let large = strip(SIZE, &band, 1.5, BG, FG);
+
+        let red = |image: &Rgb| {
+            let mut count = 0;
+            for row in 0..image.height {
+                count += red_pixels_in_row(image, row);
+            }
+            count
+        };
+
+        let small_pixels = red(&small);
+        let normal_pixels = red(&normal);
+        let large_pixels = red(&large);
+        assert!(small_pixels < normal_pixels, "{small_pixels} < {normal_pixels}");
+        assert!(normal_pixels < large_pixels, "{normal_pixels} < {large_pixels}");
     }
 }

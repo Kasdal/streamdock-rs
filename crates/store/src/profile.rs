@@ -118,14 +118,30 @@ pub struct Screen {
     /// Widgets from the top. The list holds at most three.
     #[serde(default = "default_slots")]
     pub slots: Vec<Slot>,
+    /// Size of the text, 1.0 is the normal size.
+    #[serde(default = "default_text_scale")]
+    pub text_scale: f32,
 }
 
 impl Default for Screen {
     fn default() -> Self {
         Self {
             slots: default_slots(),
+            text_scale: default_text_scale(),
         }
     }
+}
+
+/// Normal text size on the strip.
+pub const TEXT_SCALE_DEFAULT: f32 = 1.0;
+
+/// Smallest and largest text size on the strip.
+pub const TEXT_SCALE_MIN: f32 = 0.6;
+/// Largest text size on the strip.
+pub const TEXT_SCALE_MAX: f32 = 1.6;
+
+fn default_text_scale() -> f32 {
+    TEXT_SCALE_DEFAULT
 }
 
 fn default_slots() -> Vec<Slot> {
@@ -729,6 +745,12 @@ impl Profile {
                 model::STRIP_SLOTS
             ));
         }
+        if !(TEXT_SCALE_MIN..=TEXT_SCALE_MAX).contains(&self.screen.text_scale) {
+            return Err(format!(
+                "the strip text size {} is outside {TEXT_SCALE_MIN}..={TEXT_SCALE_MAX}",
+                self.screen.text_scale
+            ));
+        }
         for slot in &self.screen.slots {
             slot.validate()?;
         }
@@ -1164,8 +1186,28 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_a_weather_widget_off_the_map() {
+    fn a_new_profile_has_the_normal_text_size() {
+        let profile = Profile::new("Test");
+        assert_eq!(profile.screen.text_scale, TEXT_SCALE_DEFAULT);
+        assert!(profile.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_a_text_size_out_of_range() {
         let mut profile = Profile::new("Test");
+        profile.screen.text_scale = TEXT_SCALE_MAX + 0.1;
+        let err = profile.validate().expect_err("too large");
+        assert!(err.contains("text size"));
+
+        profile.screen.text_scale = 0.1;
+        assert!(profile.validate().is_err());
+
+        profile.screen.text_scale = 1.4;
+        assert!(profile.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_a_weather_widget_off_the_map() {        let mut profile = Profile::new("Test");
         profile.screen.slots[0] = Slot::Weather {
             city: "Nowhere".into(),
             latitude: 91.0,

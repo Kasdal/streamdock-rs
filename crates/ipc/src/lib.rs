@@ -461,7 +461,7 @@ fn route_inner(context: &Context, request: &Request) -> Response {
             import_profile(context, request)
         }
         ("GET", "/api/geocode") => {
-            if request.query_value("token") != Some(context.token.as_str()) {
+            if !api_token_ok(context, request) {
                 return Response::message(401, "missing or wrong token");
             }
             geocode(context, request)

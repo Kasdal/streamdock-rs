@@ -330,7 +330,13 @@ pub fn strip_images(
         })
         .collect();
 
-    let upright = strip::strip(size, &bands, background, foreground);
+    let upright = strip::strip(
+        size,
+        &bands,
+        profile.screen.text_scale,
+        background,
+        foreground,
+    );
     let rotated = image::rotate(&upright, model::ROTATION);
 
     let device = image::encode_max(&rotated, proto::MAX_IMAGE_BYTES)?;
@@ -641,7 +647,10 @@ mod tests {
 
     fn profile_with(slots: Vec<Slot>) -> Profile {
         let mut profile = Profile::new("Test");
-        profile.screen = Screen { slots };
+        profile.screen = Screen {
+            slots,
+            text_scale: 1.0,
+        };
         profile
     }
 

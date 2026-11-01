@@ -463,6 +463,10 @@
       <h2>SIDE STRIP</h2>
       <p class="hint">Three widgets, one per third of the 96 by 460 display.</p>
       <div id="strip-slots"></div>
+      <div class="field">
+        <label>Text size <b id="strip-scale-value">100%</b></label>
+        <input id="strip-scale" type="range" min="60" max="160" step="5" value="100">
+      </div>
       <div class="actions">
         <button id="strip-apply" class="icon-btn primary">Apply strip</button>
       </div>
@@ -644,6 +648,7 @@ function refreshStrip() {
 /* ---------------- side strip ---------------- */
 
 let stripDraft = null;
+let stripScale = 1;
 
 function stripSlots() {
   const screen = (state && state.profile.screen) || {};
@@ -652,10 +657,21 @@ function stripSlots() {
   return slots.slice(0, 3);
 }
 
-function drawStripEditor() {
+function drawStripEditor(reset) {
   const host = $("strip-slots");
   if (!host) return;
-  stripDraft = stripSlots();
+  if (reset !== false || !stripDraft) {
+    stripDraft = stripSlots();
+    const saved = (state && state.profile.screen && state.profile.screen.text_scale) || 1;
+    stripScale = Number(saved);
+  }
+
+  const slider = $("strip-scale");
+  if (slider) {
+    slider.value = String(Math.round(stripScale * 100));
+    $("strip-scale-value").textContent = Math.round(stripScale * 100) + "%";
+  }
+
   host.innerHTML = "";
 
   stripDraft.forEach((slot, index) => {
@@ -685,7 +701,7 @@ function drawStripEditor() {
         : type.value === "clock" ? { type: "clock", style: "both" }
         : type.value === "weather" ? { type: "weather", city: "", units: "metric" }
         : { type: "empty" };
-      drawStripEditor();
+      drawStripEditor(false);
     });
     block.appendChild(type);
 
@@ -851,7 +867,7 @@ async function applyStrip() {
   }
 
   const profile = JSON.parse(JSON.stringify(state.profile));
-  profile.screen = { slots: stripDraft };
+  profile.screen = { slots: stripDraft, text_scale: stripScale };
   try {
     await saveProfile(profile, "strip saved", state.rev);
     $("strip-message").textContent = "saved";
@@ -1348,6 +1364,10 @@ async function importProfileFile(file) {
 $("f-kind").addEventListener("change", updateKindRows);
 $("apply").addEventListener("click", applyKey);
 $("strip-apply").addEventListener("click", applyStrip);
+$("strip-scale").addEventListener("input", (event) => {
+  stripScale = Number(event.target.value) / 100;
+  $("strip-scale-value").textContent = event.target.value + "%";
+});
 // The strip pane follows the device, one picture a second.
 setInterval(() => {
   if (!document.hidden) refreshStrip();

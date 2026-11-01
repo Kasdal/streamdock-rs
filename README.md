@@ -38,7 +38,7 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Desktop window | verified: one instance, native save dialog, window place |
 | Side strip meters | verified on hardware: CPU, GPU and memory load |
 | Side strip editor | verified: live pane, three widgets, weather lookup |
-| Unit tests | 207 tests, no device needed |
+| Unit tests | 210 tests, no device needed |
 ## Device facts (measured)
 
 Model: AJAZZ AKP-153E.
@@ -266,6 +266,12 @@ Every source is user mode. No administrator rights and no driver are needed.
 The editor shows the same picture the device gets. Click the strip in the
 device picture, pick a widget for each of the three slots, then press Apply
 strip.
+
+The STRIP panel also has a **Text size** slider, from 60 % to 160 %. The
+profile stores it as `screen.text_scale`. The band layout grows with the
+setting, so 150 % is really bigger and not only a larger font inside the same
+box. If the three lines need more room than a band has, the text shrinks to
+fit.
 
 `streamdock preview --name Demo --out sheet.jpg` writes a picture of one page
 without the panel. Use it to check a profile on any machine.

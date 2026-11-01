@@ -1573,4 +1573,48 @@ Open work:
    only drawn when a value moves.
 3. The editor cannot reorder a slot; it can only change its type.
 
+## 40. Session 3 part 6: a token bug and a text size option
+
+Date: 2026-11-01. Two fixes that the user found while using the strip.
+
+### The Look up button said "missing or wrong token"
+
+The page calls the API with an `X-Token` header. The route for
+`GET /api/geocode` checked a `token` query value instead, so every lookup
+failed with 401. Other routes were fine. The route now uses `api_token_ok`,
+the same check as `/api/state`.
+
+Evidence: `Look up` for Paris returned five places and the slot showed
+`Paris at 48.85, 2.35`; the daemon then logged `weather for Paris: 10° Partly
+cloudy`.
+
+A second bug came up in the same test: changing a slot's type redrew the
+panel from the saved profile, so the new type was lost before Apply. The
+redraw now keeps the draft; only the panel open and a save reset it.
+
+### Text size
+
+1. `screen.text_scale` holds the size, 0.6 to 1.6, default 1.0. The store
+   validates the range.
+2. The editor shows a slider from 60 % to 160 % under the three slots.
+3. The renderer scales the band layout, not only the font. Without that, a
+   bigger setting changed nothing, because the text already filled its tile.
+   When the three lines need more room than a band has, they shrink to fit.
+4. The strip redraws within a second of Apply.
+
+Evidence:
+
+| Test | Result |
+| --- | --- |
+| Look up Paris | 200, five places |
+| Apply with 150 % | Profile holds `text_scale: 1.5`, the pane and device show larger text |
+| 100 % again | Text back to the normal size |
+| Tests | 210 pass |
+
+Open work:
+
+1. The place list under a weather slot shows the dropdown text and the chosen
+   place in one line. A little CSS would separate them.
+2. The text size applies to the whole strip, not to one slot.
+
 
