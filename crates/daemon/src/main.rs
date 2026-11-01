@@ -1,29 +1,36 @@
 //! streamdockd - background panel daemon.
 //!
-//! The daemon owns the HID handle. It paints the keys of one profile, runs the
-//! actions of the pressed keys, and repaints after a reconnect.
+//! Two threads:
+//!
+//! 1. The panel thread owns the HID session. It drains a bounded queue and
+//!    reads key reports, so the heartbeat never stops.
+//! 2. This thread owns the profile, the actions, the editor server and the
+//!    animation clocks. It encodes images and queues them.
 //!
 //! Usage:
-//!   streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank] [--verbose]
-//!
-//! The keys keep working when no window is open, because there is no window.
+//!   streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank]
+//!               [--verbose] [--no-ui] [--no-tray]
 
+mod painter;
+mod panel;
 mod single;
 mod tray;
 
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use streamdock_actions::Effect;
 use streamdock_core::model;
-use streamdock_core::session::{Session, SessionPoll};
+use streamdock_core::proto::KeyEvent;
 use streamdock_ipc as ipc;
-use streamdock_render as render;
 use streamdock_store::profile::Profile;
 use streamdock_store::Store;
 
+use painter::Painter;
+use panel::{Panel, PanelEvent};
 use single::SingleInstance;
 
 static START: OnceLock<Instant> = OnceLock::new();
@@ -35,7 +42,6 @@ fn log(message: impl AsRef<str>) {
     println!("[{:>9.3}] {}", start.elapsed().as_secs_f64(), message.as_ref());
 }
 
-/// Ask the loop to stop on Ctrl+C and on console close.
 /// Ask the loop to stop. The tray menu and Ctrl+C both use this.
 fn request_shutdown() {
     SHUTDOWN.store(true, Ordering::SeqCst);
@@ -113,11 +119,12 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         profile.pages.len()
     ));
 
-    let mut session = Session::new(pid);
+    let mut panel = Panel::start(pid)?;
+    let mut painter = Painter::new(store.dir().to_path_buf());
     let mut page = 0usize;
 
-    // The editor talks to the daemon through this channel. Only this thread
-    // touches the device, so a save cannot race with a paint.
+    // The editor talks to this thread through the channel. Only the panel
+    // thread touches the device, so a save cannot race with a paint.
     let shared = ipc::Shared::new(ipc::State::new(profile.clone(), page));
     let (commands, incoming) = mpsc::channel::<ipc::Command>();
     let mut tray = None;
@@ -152,10 +159,29 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 command,
                 &mut profile,
                 &mut page,
-                &mut session,
+                &panel,
+                &mut painter,
                 &store,
                 &shared,
             );
+        }
+
+        let mut busy = false;
+        while let Some(event) = panel.try_event() {
+            busy = true;
+            handle_panel_event(
+                event,
+                &mut profile,
+                &mut page,
+                &panel,
+                &mut painter,
+                &shared,
+                verbose,
+            );
+        }
+
+        if painter.tick(&panel) {
+            busy = true;
         }
 
         if shutdown_requested() {
@@ -167,107 +193,123 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
 
-        match session.poll(Duration::from_millis(200)) {
-            SessionPoll::Connected => {
-                log("panel connected");
-                shared.update(|state| state.connected = true);
-                paint_all(&mut session, &profile, page, store.dir());
-            }
-            SessionPoll::Disconnected => {
-                let reason = match session.last_error() {
-                    Some(e) => e.to_string(),
-                    None => "not present".to_string(),
-                };
-                log(format!("panel disconnected: {reason}"));
-                shared.update(|state| state.connected = false);
-            }
-            SessionPoll::Event(event) => {
-                if verbose {
-                    log(format!(
-                        "report: key id 0x{:02X} pressed={}",
-                        event.key, event.pressed
-                    ));
-                }
-                if !event.pressed {
-                    continue;
-                }
-                let Some(number) = model::key_number(event.key) else {
-                    log(format!("unknown key id 0x{:02X}", event.key));
-                    continue;
-                };
-                if !model::is_button(number) {
-                    log(format!("key {number} is a display and has no button"));
-                    continue;
-                }
-
-                let actions = match profile.pages[page].key(number) {
-                    Some(config) => config.actions.clone(),
-                    None => {
-                        if verbose {
-                            log(format!("key {number} has no configuration"));
-                        }
-                        continue;
-                    }
-                };
-                if actions.is_empty() {
-                    if verbose {
-                        log(format!("key {number} has no actions"));
-                    }
-                    continue;
-                }
-
-                log(format!(
-                    "key {number} -> {} action(s)",
-                    actions.len()
-                ));
-
-                match streamdock_actions::run(&actions) {
-                    Ok(Effect::None) => {}
-                    Ok(Effect::SetBrightness(value)) => {
-                        match session.with_device(|dev| dev.set_brightness(value)) {
-                            Ok(()) => {
-                                log(format!("brightness {value}"));
-                                shared.update(|state| state.brightness = Some(value));
-                            }
-                            Err(e) => log(format!("brightness failed: {e}")),
-                        }
-                    }
-                    Ok(Effect::SwitchPage(target)) => match profile.page_index(&target) {
-                        Some(index) if index != page => {
-                            page = index;
-                            log(format!("page {}", profile.pages[page].name));
-                            shared.update(|state| state.set_page(index));
-                            paint_all(&mut session, &profile, page, store.dir());
-                        }
-                        Some(_) => {}
-                        None => log(format!("no page named {target:?}")),
-                    },
-                    Err(e) => log(format!("action failed: {e}")),
-                }
-            }
-            SessionPoll::Idle => {}
+        if !busy {
+            thread::sleep(Duration::from_millis(painter::IDLE_TICK_MS));
         }
     }
 
     drop(tray);
 
     if blank_on_exit {
-        match session.with_device(|dev| dev.blank()) {
-            Ok(()) => log("keys cleared"),
-            Err(e) => log(format!("could not clear the keys: {e}")),
-        }
+        panel.blank();
+        log("keys cleared");
     }
+    panel.stop();
 
     Ok(())
 }
 
-/// Apply one editor command. Only the daemon thread calls this, so the device
-/// handle stays with one owner.
+/// Handle one report from the panel thread.
+fn handle_panel_event(
+    event: PanelEvent,
+    profile: &mut Profile,
+    page: &mut usize,
+    panel: &Panel,
+    painter: &mut Painter,
+    shared: &Arc<ipc::Shared>,
+    verbose: bool,
+) {
+    match event {
+        PanelEvent::Connected => {
+            log("panel connected");
+            shared.update(|state| state.connected = true);
+            paint_page(panel, painter, profile, *page);
+        }
+        PanelEvent::Disconnected(reason) => {
+            log(format!("panel disconnected: {reason}"));
+            shared.update(|state| state.connected = false);
+            painter.stop_animations();
+        }
+        PanelEvent::Key(event) => {
+            handle_key(event, profile, page, panel, painter, shared, verbose);
+        }
+    }
+}
+
+fn handle_key(
+    event: KeyEvent,
+    profile: &mut Profile,
+    page: &mut usize,
+    panel: &Panel,
+    painter: &mut Painter,
+    shared: &Arc<ipc::Shared>,
+    verbose: bool,
+) {
+    if verbose {
+        log(format!(
+            "report: key id 0x{:02X} pressed={}",
+            event.key, event.pressed
+        ));
+    }
+    if !event.pressed {
+        return;
+    }
+
+    let Some(number) = model::key_number(event.key) else {
+        log(format!("unknown key id 0x{:02X}", event.key));
+        return;
+    };
+    if !model::is_button(number) {
+        log(format!("key {number} is a display and has no button"));
+        return;
+    }
+
+    let actions = match profile.pages[*page].key(number) {
+        Some(config) => config.actions.clone(),
+        None => {
+            if verbose {
+                log(format!("key {number} has no configuration"));
+            }
+            return;
+        }
+    };
+    if actions.is_empty() {
+        if verbose {
+            log(format!("key {number} has no actions"));
+        }
+        return;
+    }
+
+    log(format!("key {number} -> {} action(s)", actions.len()));
+
+    match streamdock_actions::run(&actions) {
+        Ok(Effect::None) => {}
+        Ok(Effect::SetBrightness(value)) => {
+            panel.brightness(value);
+            log(format!("brightness {value}"));
+            shared.update(|state| state.brightness = Some(value));
+        }
+        Ok(Effect::SwitchPage(target)) => match profile.page_index(&target) {
+            Some(index) if index != *page => {
+                *page = index;
+                log(format!("page {}", profile.pages[*page].name));
+                shared.update(|state| state.set_page(index));
+                paint_page(panel, painter, profile, *page);
+            }
+            Some(_) => {}
+            None => log(format!("no page named {target:?}")),
+        },
+        Err(e) => log(format!("action failed: {e}")),
+    }
+}
+
+/// Apply one editor command.
 fn handle_command(
     command: ipc::Command,
     profile: &mut Profile,
     page: &mut usize,
-    session: &mut Session,
+    panel: &Panel,
+    painter: &mut Painter,
     store: &Store,
     shared: &Arc<ipc::Shared>,
 ) {
@@ -299,8 +341,11 @@ fn handle_command(
             if *page >= profile.pages.len() {
                 *page = profile.pages.len().saturating_sub(1);
             }
-            log(format!("profile saved by the editor, page {}", profile.pages[*page].name));
-            paint_all(session, profile, *page, store.dir());
+            log(format!(
+                "profile saved by the editor, page {}",
+                profile.pages[*page].name
+            ));
+            paint_page(panel, painter, profile, *page);
             shared.update(|state| {
                 state.set_profile(profile.clone());
                 state.set_page(*page);
@@ -311,7 +356,7 @@ fn handle_command(
             Some(index) => {
                 *page = index;
                 log(format!("page {} from the editor", profile.pages[index].name));
-                paint_all(session, profile, *page, store.dir());
+                paint_page(panel, painter, profile, *page);
                 shared.update(|state| state.set_page(index));
                 let _ = reply.send(ipc::Reply::Ok(shared.snapshot()));
             }
@@ -320,16 +365,10 @@ fn handle_command(
             }
         },
         ipc::Command::Brightness { value, reply } => {
-            match session.with_device(|dev| dev.set_brightness(value)) {
-                Ok(()) => {
-                    log(format!("brightness {value} from the editor"));
-                    shared.update(|state| state.brightness = Some(value));
-                    let _ = reply.send(ipc::Reply::Ok(shared.snapshot()));
-                }
-                Err(e) => {
-                    let _ = reply.send(ipc::Reply::Error(e.to_string()));
-                }
-            }
+            panel.brightness(value);
+            log(format!("brightness {value} from the editor"));
+            shared.update(|state| state.brightness = Some(value));
+            let _ = reply.send(ipc::Reply::Ok(shared.snapshot()));
         }
         ipc::Command::Reload { reply } => match store.load(&profile.name) {
             Ok(next) => {
@@ -337,8 +376,11 @@ fn handle_command(
                 if *page >= profile.pages.len() {
                     *page = 0;
                 }
-                log(format!("profile reloaded, page {}", profile.pages[*page].name));
-                paint_all(session, profile, *page, store.dir());
+                log(format!(
+                    "profile reloaded, page {}",
+                    profile.pages[*page].name
+                ));
+                paint_page(panel, painter, profile, *page);
                 shared.update(|state| {
                     state.set_profile(profile.clone());
                     state.set_page(*page);
@@ -352,38 +394,22 @@ fn handle_command(
     }
 }
 
-/// Paint every key of one page.
-///
-/// A render fault draws a red ERR tile, so a broken image file does not leave
-/// a stale key on the panel.
-fn paint_all(session: &mut Session, profile: &Profile, page: usize, base: &std::path::Path) {
+/// Queue every key of one page and start its animations.
+fn paint_page(panel: &Panel, painter: &mut Painter, profile: &Profile, page: usize) {
     let page_ref = &profile.pages[page];
-    let mut sent = 0usize;
+    let mut warnings = Vec::new();
+    let queued = painter.paint(panel, page_ref, &mut |message| warnings.push(message));
 
-    let result = session.with_device(|dev| {
-        sent = 0;
-        for key in 1..=model::KEY_COUNT {
-            let jpeg = match render::encode_key_in(page_ref, key, base) {
-                Ok(jpeg) => jpeg,
-                Err(e) => {
-                    log(format!("key {key}: {e}"));
-                    match render::fault_tile(model::key_size(key)) {
-                        Ok(jpeg) => jpeg,
-                        Err(e) => {
-                            log(format!("key {key}: cannot draw the fault tile: {e}"));
-                            continue;
-                        }
-                    }
-                }
-            };
-            dev.send_image(key, &jpeg)?;
-            sent += 1;
-        }
-        Ok(())
-    });
+    for warning in warnings {
+        log(warning);
+    }
 
-    match result {
-        Ok(()) => log(format!("page {} painted, {sent} keys", page_ref.name)),
-        Err(e) => log(format!("paint stopped after {sent} keys: {e}")),
+    if painter.is_animated() {
+        log(format!(
+            "page {} queued, {queued} keys, animation running",
+            page_ref.name
+        ));
+    } else {
+        log(format!("page {} queued, {queued} keys", page_ref.name));
     }
 }

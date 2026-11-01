@@ -182,6 +182,7 @@ orientation, no mirroring.
 | `crates/core/src/model.rs` | Key table, button and display split, image sizes, rotation |
 | `crates/core/src/image.rs` | JPEG decode, rotate, scale, crop, encode under the limit |
 | `crates/core/src/text.rs` | 5x7 bitmap font and word wrap |
+| `crates/core/src/animation.rs` | GIF decode, compositing, delay handling, frame sampling |
 | `crates/core/src/tile.rs` | Tile renderer: numbers, labels, frames, noise |
 | `crates/core/src/device.rs` | High level `Device`: session, commands, image retry, events |
 | `crates/core/src/session.rs` | Reconnect and hot plug over `Device` |
@@ -194,6 +195,8 @@ orientation, no mirroring.
 | `crates/ipc/src/http.rs` | Bounded HTTP request parse and response write |
 | `crates/ipc/src/ui.html` | The editor page |
 | `crates/daemon/src/main.rs` | `streamdockd`: paint, poll, act, repaint, serve the editor |
+| `crates/daemon/src/panel.rs` | Panel thread: device owner, command queue, key reader |
+| `crates/daemon/src/painter.rs` | Tile encoding, animation clock, animation cache |
 | `crates/daemon/src/tray.rs` | Tray icon and its menu on its own thread |
 | `crates/daemon/src/single.rs` | Named mutex, one daemon per machine |
 | `crates/cli/src/autostart.rs` | Per-user Run key install and remove |
@@ -506,7 +509,7 @@ Measured requirement: rotate by 270 degrees at the end, not at the start.
 | M2 (done without IPC) | Daemon, profile store, action engine for hotkey, text, launch, multi | Keys act while the UI is closed |
 | M3 (part done) | Key grid, key editor, live preview in a browser page | A user builds a 15 key page without a CLI |
 | M3 | Tauri UI with grid, key editor, drag and drop, live preview | A user builds a 15 key page without a CLI |
-| M4 | Renderer with text, SVG, GIF, icon crop, themes, import and export | A page with icons and one animation runs |
+| M4 (part done) | Renderer with text, images and GIF animation are in. SVG, icons, themes and import are open. | A page with one animation runs |
 | M5 | Per application profiles, HTTP actions, plugin host | A profile switches when the user changes application |
 | M6 | Signing, installer, update check, docs, privacy text | A stranger can install and use it |
 
@@ -814,4 +817,49 @@ Open work that this session added:
 1. A merge view for a conflict, instead of reload or overwrite.
 2. Redo.
 3. Name the page and the key in the conflict message.
+
+## 25. Session 2 part 7: animated GIF keys and the panel thread
+
+Date: 2026-11-01. A key can now run a GIF animation, and the device has its
+own thread so the heartbeat and the key reader never stop.
+
+| Test | Result |
+| --- | --- |
+| Four frame GIF on key 1 | Red, green, blue and white cycle |
+| Key press while the key animates | The page switched at once |
+| Stale save during animation | Still refused with a conflict |
+| GIF upload through the editor | Accepted, stored as `assets/<name>-<hash>.gif` |
+
+Architecture:
+
+1. The panel thread owns the `Session`. It drains a bounded command queue for
+   at most 40 ms, then reads key reports for a 20 ms slice.
+2. The coordinator thread keeps the profile, the actions, the editor server
+   and the animation clocks. It encodes images and queues them.
+3. A frame is pre-encoded once per key size and cached as an `Arc<[u8]>`, so a
+   frame tick is only a queue write plus a reference count.
+4. The panel thread drops writes while it is disconnected, so an animation
+   cannot trigger a reconnect storm.
+
+Limits and rules:
+
+1. At most 60 frames per animation. A longer GIF is sampled down, and the
+   delays of skipped frames are added to the frames that stay, so the loop
+   duration is unchanged.
+2. A frame delay is clamped to 20 ms or more, and to 2000 ms or less.
+3. The animation cache holds 64 entries and is cleared when it is full.
+4. A transparent GIF pixel shows black, because the frames are composited
+   onto black.
+5. The command queue holds 1024 writes. When it is full, a frame is dropped
+   and the next tick tries again.
+6. The editor preview and the contact sheet show frame 0 only.
+
+Open work that this session added:
+
+1. Give each key its own phase, so ten animated keys do not change together.
+2. Cap the total animation memory across keys, not only the frame count.
+3. Run slow actions (a long text action) on a worker, so the coordinator keeps
+   the animation clocks exact.
+4. Show a moving frame in the editor, not only frame 0.
+5. Measure the real frame rate limit on the panel with many animated keys.
 

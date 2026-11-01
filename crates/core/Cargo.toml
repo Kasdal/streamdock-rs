@@ -6,6 +6,7 @@ license.workspace = true
 description = "HID protocol, device handle and reconnect logic for Stream Dock keypads"
 
 [dependencies]
+gif = "0.13"
 jpeg-decoder.workspace = true
 jpeg-encoder.workspace = true
 png = "0.17"

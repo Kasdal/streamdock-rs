@@ -607,6 +607,7 @@ fn image_summary(spec: &ImageSpec) -> String {
         ImageSpec::Color { color } => format!("colour {color}"),
         ImageSpec::Text { text, .. } => format!("text {text:?}"),
         ImageSpec::File { path } => format!("file {path}"),
+        ImageSpec::Animation { path } => format!("animation {path}"),
         ImageSpec::Icon { name, .. } => format!("icon {name}"),
     }
 }

@@ -8,3 +8,6 @@ description = "Tile renderer for Stream Dock keys: colour, text and image files"
 [dependencies]
 streamdock-core = { path = "../core" }
 streamdock-store = { path = "../store" }
+
+[dev-dependencies]
+gif = "0.13"

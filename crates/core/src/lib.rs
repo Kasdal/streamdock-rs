@@ -20,6 +20,7 @@
 //! Facts that this crate depends on are documented in `proto` and `model`.
 //! Measured hardware evidence is in `handoff/HANDOFF.md`.
 
+pub mod animation;
 pub mod device;
 pub mod error;
 pub mod hid;

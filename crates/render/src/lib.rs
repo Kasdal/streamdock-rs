@@ -10,10 +10,11 @@
 //! have the same size.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use streamdock_core::image::{self, Rgb};
 use streamdock_core::tile;
-use streamdock_core::{model, proto};
+use streamdock_core::{animation, model, proto};
 use streamdock_store::profile::{parse_color, ImageSpec, Key, Page};
 
 /// Default tile background.
@@ -122,6 +123,21 @@ pub fn compose_in(
                 let decoded = image::decode(&bytes)?;
                 Ok(image::fit_cover(&decoded, width, height))
             }
+            ImageSpec::Animation { path } => {
+                // The tile shows the first frame. The daemon uses
+                // `load_animation` for the moving version.
+                let resolved = resolve_path(base, path);
+                let bytes = std::fs::read(&resolved).map_err(|e| {
+                    format!("cannot read animation {}: {e}", resolved.display())
+                })?;
+                let frames = animation::decode_gif(&bytes)?;
+                let first = frames
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| "GIF has no frames".to_string())?;
+                let rgb = Rgb::new(first.width, first.height, first.rgb)?;
+                Ok(image::fit_cover(&rgb, width, height))
+            }
             ImageSpec::Icon { name, background } => {
                 // The icon library is not here yet. Show the name instead of
                 // an empty key, so the profile still makes sense.
@@ -177,6 +193,53 @@ pub fn encode_key(page: &Page, key: u8) -> Result<Vec<u8>, String> {
 /// Encode one key of a page, with a base folder for relative image paths.
 pub fn encode_key_in(page: &Page, key: u8, base: &Path) -> Result<Vec<u8>, String> {
     encode_in(page.key(key), model::key_size(key), scale_for(page, key), base)
+}
+
+/// A ready to send animation: pre-encoded JPEG frames and their delays.
+#[derive(Debug, Clone)]
+pub struct Animation {
+    pub frames: Vec<Arc<[u8]>>,
+    pub delays_ms: Vec<u16>,
+}
+
+impl Animation {
+    /// Total loop time in milliseconds.
+    pub fn duration_ms(&self) -> u32 {
+        self.delays_ms.iter().map(|delay| *delay as u32).sum()
+    }
+}
+
+/// Decode a GIF file and pre-encode every frame for one key size.
+///
+/// The frames are already rotated and fit under the size limit, so the daemon
+/// only has to write them. A frame that cannot be compressed is skipped.
+pub fn load_animation(path: &Path, size: (u16, u16)) -> Result<Animation, String> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| format!("cannot read animation {}: {e}", path.display()))?;
+    let decoded = animation::decode_gif(&bytes)?;
+    let total = decoded.len();
+
+    let mut frames = Vec::with_capacity(total);
+    let mut delays_ms = Vec::with_capacity(total);
+
+    for frame in decoded {
+        let rgb = Rgb::new(frame.width, frame.height, frame.rgb)?;
+        let fitted = image::fit_cover(&rgb, size.0, size.1);
+        let rotated = image::rotate(&fitted, model::ROTATION);
+        if let Ok(jpeg) = image::encode_max(&rotated, proto::MAX_IMAGE_BYTES) {
+            frames.push(Arc::from(jpeg));
+            delays_ms.push(frame.delay_ms);
+        }
+    }
+
+    if frames.is_empty() {
+        return Err(format!(
+            "none of the {total} GIF frames fit {} bytes",
+            proto::MAX_IMAGE_BYTES
+        ));
+    }
+
+    Ok(Animation { frames, delays_ms })
 }
 
 /// A tile that reports a render fault, so the key never goes blank silently.
@@ -418,6 +481,40 @@ mod tests {
         assert!(relative.ends_with("picture.png"));
         let absolute = resolve_path(base, "C:/pictures/picture.jpg");
         assert_eq!(absolute, PathBuf::from("C:/pictures/picture.jpg"));
+    }
+
+    #[test]
+    fn an_animation_loads_every_frame() {
+        let dir = std::env::temp_dir().join(format!(
+            "streamdock-render-animation-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test.gif");
+
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = gif::Encoder::new(&mut bytes, 8, 8, &[]).expect("encoder");
+            for colour in [[255u8, 0, 0, 255], [0, 0, 255, 255]] {
+                let mut pixels = colour.repeat(64);
+                let mut frame = gif::Frame::from_rgba(8, 8, &mut pixels);
+                frame.delay = 5;
+                encoder.write_frame(&frame).expect("frame");
+            }
+        }
+        std::fs::write(&path, &bytes).expect("write");
+
+        let animation = load_animation(&path, (96, 96)).expect("load");
+        assert_eq!(animation.frames.len(), 2);
+        assert_eq!(animation.delays_ms, vec![50, 50]);
+        assert_eq!(animation.duration_ms(), 100);
+        assert!(animation
+            .frames
+            .iter()
+            .all(|frame| frame.len() <= proto::MAX_IMAGE_BYTES));
+        assert_eq!(&animation.frames[0][..2], &[0xFF, 0xD8]);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

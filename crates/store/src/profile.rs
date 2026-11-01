@@ -143,6 +143,8 @@ pub enum ImageSpec {
     },
     /// A JPEG or PNG file on disk.
     File { path: String },
+    /// An animated GIF file on disk.
+    Animation { path: String },
     /// A named icon on a background. The icon library arrives in M4.
     Icon {
         name: String,
@@ -378,6 +380,12 @@ impl ImageSpec {
             ImageSpec::File { path } => {
                 if path.trim().is_empty() {
                     return Err("image file path is empty".into());
+                }
+                Ok(())
+            }
+            ImageSpec::Animation { path } => {
+                if path.trim().is_empty() {
+                    return Err("animation file path is empty".into());
                 }
                 Ok(())
             }

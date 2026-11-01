@@ -20,7 +20,8 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Drag and drop | verified on hardware: drop a PNG on a key |
 | Tray icon and autostart | verified on hardware: menu, quit, Run key |
 | Undo and save conflict | verified on hardware: undo, warning on a stale save |
-| Unit tests | 123 tests, no device needed |
+| Animated GIF keys | verified on hardware: 4 frame loop, keys stay responsive |
+| Unit tests | 128 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -153,8 +154,9 @@ the panel changes within a second. The page needs no build step and no extra
 runtime.
 
 The grid shows the real tile that the daemon draws, not an approximation.
-Drag a JPEG or PNG file onto a key to set its image. The file is copied into
-the `assets` folder next to the profile, so the profile stays portable.
+Drag a JPEG, PNG or GIF file onto a key to set its image. A GIF becomes an
+animation. The file is copied into the `assets` folder next to the profile,
+so the profile stays portable.
 
 The Undo button restores the profile from before the last save. Ctrl+Z does
 the same when the focus is not in a text field.
@@ -183,12 +185,23 @@ The daemon does these steps:
 
 1. Take a named mutex, so a second copy exits with an error.
 2. Load the profile. A missing file is created as a starter profile.
-3. Open the panel and start the session.
+3. Start the panel thread. It owns the device and the heartbeat.
 4. Paint all 18 keys. The side strip is a display, so it takes a tile too.
 5. Poll for key events with a heartbeat.
 6. Run the actions of a pressed key in order.
 7. Repaint the page after a page switch or a reconnect.
 8. Clear the keys on exit, unless `--no-blank` is set.
+
+The daemon uses two threads:
+
+| Thread | Work |
+| --- | --- |
+| panel | writes images and brightness, reads key reports, sends the heartbeat |
+| coordinator | profile, actions, editor server, animation timing |
+
+The panel thread drains a bounded queue for at most 40 ms, then reads keys.
+An animation frame is only a queue write, because every frame is pre-encoded.
+Key presses stay responsive while a key animates.
 
 Measured: a page switch repaints 18 keys in about 20 ms.
 
@@ -222,8 +235,13 @@ One profile is one JSON file. A page holds keys by number.
 }
 ```
 
-Image kinds: `color`, `text`, `file`, `icon` (the icon name is drawn as text
-until the icon library arrives in M4).
+Image kinds: `color`, `text`, `file`, `animation`, `icon` (the icon name is
+drawn as text until the icon library arrives in M4).
+
+An `animation` is a GIF. Each frame is fitted to the key, rotated and encoded
+once. The daemon keeps at most 60 frames per animation and samples a longer
+GIF down while keeping the loop time. A frame delay is clamped to 20 ms or
+more.
 
 A `file` path may be absolute, or relative to the profile folder. The editor
 stores a dropped image as `assets/<name>-<hash>.jpg` or `.png`. JPEG and PNG

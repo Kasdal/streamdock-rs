@@ -400,7 +400,7 @@ fn tile_image(context: &Context, request: &Request) -> Response {
 fn store_asset(context: &Context, request: &Request) -> Response {
     let name = request.query_value("name").unwrap_or("image");
     let Some(extension) = image_extension(name) else {
-        return Response::message(400, "only .jpg and .png files are accepted");
+        return Response::message(400, "only .jpg, .png and .gif files are accepted");
     };
 
     if request.body.len() > MAX_ASSET_BYTES {
@@ -414,7 +414,12 @@ fn store_asset(context: &Context, request: &Request) -> Response {
     }
 
     // Decode first: a file with the wrong content never reaches the profile.
-    if let Err(message) = image::decode(&request.body) {
+    let checked = if extension == "gif" {
+        streamdock_core::animation::decode_gif(&request.body).map(|_| ())
+    } else {
+        image::decode(&request.body).map(|_| ())
+    };
+    if let Err(message) = checked {
         return Response::message(400, message);
     }
 
@@ -443,6 +448,7 @@ fn image_extension(name: &str) -> Option<&'static str> {
     match extension.as_str() {
         "jpg" | "jpeg" => Some("jpg"),
         "png" => Some("png"),
+        "gif" => Some("gif"),
         _ => None,
     }
 }
