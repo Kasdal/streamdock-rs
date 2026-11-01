@@ -5,6 +5,9 @@
 //! when it is not running, and shows the editor.
 //!
 //! The tray menu keeps the editor one click away after the window is closed.
+//!
+//! Only one copy of the window runs. A second start hands its command line to
+//! the first copy and exits. The first copy shows and focuses its window.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -31,6 +34,13 @@ struct Endpoint {
 
 fn main() {
     tauri::Builder::default()
+        // This plugin must come first: a second start must exit before it
+        // creates a window or a tray icon. The first copy takes the command
+        // line and brings its window forward.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            trace("a second copy started; show the window");
+            show_editor(app);
+        }))
         .invoke_handler(tauri::generate_handler![endpoint, export_profile])
         .setup(|app| {
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -61,6 +71,9 @@ fn main() {
                     "reload" => reload_profile(),
                     "quit" => {
                         trace("quit from the tray menu");
+                        // Release the single-instance lock first, because the
+                        // direct exit below skips the normal cleanup.
+                        tauri_plugin_single_instance::destroy(app);
                         app.exit(0);
                         // The tray icon can keep the event loop alive. Exit
                         // directly so the tray entry never stays behind.

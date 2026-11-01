@@ -371,8 +371,13 @@ the API.
 | Window | 1320 by 860, dark Elgato-style editor |
 | Close button | Hides the window; the app keeps running in the tray |
 | Tray menu | Show editor, Reload profile, Quit |
+| Second start | The running window comes forward; the second copy exits |
 | Export | Writes `StreamDock-profile.zip` to your Downloads folder |
 | API | The page calls the daemon API with the token, from a CORS allowlist |
+
+One copy of the window runs at a time. The app holds a named mutex, so a
+second start hands its command line to the first copy and exits. The first
+copy shows and focuses its window.
 
 The desktop window is a Tauri 2 app, so it needs the MSVC toolchain. The rest of
 the project builds with GNU, so the crate sits outside the workspace.

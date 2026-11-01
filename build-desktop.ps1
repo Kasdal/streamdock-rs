@@ -39,7 +39,11 @@ if (Test-Path $mingw) {
 }
 
 Write-Host "Building the desktop window"
-cargo build --$Configuration --manifest-path (Join-Path $root "crates\desktop\Cargo.toml") --target x86_64-pc-windows-msvc
+# Cargo writes its progress to stderr. Windows PowerShell turns that into a
+# terminating error while $ErrorActionPreference is "Stop", so lower it here
+# and check the exit code instead.
+$ErrorActionPreference = "Continue"
+& cargo build --$Configuration --manifest-path (Join-Path $root "crates\desktop\Cargo.toml") --target x86_64-pc-windows-msvc 2>&1 | ForEach-Object { Write-Host $_ }
 if ($LASTEXITCODE -ne 0) {
     throw "the desktop build failed"
 }

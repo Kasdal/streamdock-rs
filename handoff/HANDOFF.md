@@ -1282,8 +1282,53 @@ Evidence:
 
 Open work:
 
-1. A single-instance guard for the app. A second start adds a second tray icon.
-2. A native save dialog for export instead of the fixed Downloads name.
-3. Remember the window size and position.
-4. Tighten the CORS list if another origin is ever served.
+1. A native save dialog for export instead of the fixed Downloads name.
+2. Remember the window size and position.
+3. Tighten the CORS list if another origin is ever served.
+
+## 35. Session 3 part 1: one desktop window only
+
+Date: 2026-11-01. The app now runs one copy. A second start exits and the
+running copy shows and focuses its window.
+
+How it works:
+
+1. The app uses `tauri-plugin-single-instance` 2.5.5. The plugin takes a named
+   mutex `com.streamdock.desktop-sim` and creates a hidden message window
+   `com.streamdock.desktop-siw`.
+2. The plugin is the first entry in the builder, so a second copy exits before
+   it creates a window, a tray icon or a daemon.
+3. The second copy sends its command line to the first copy with `WM_COPYDATA`.
+   It calls `AllowSetForegroundWindow` first, so the first copy may take the
+   foreground.
+4. The callback runs `show_editor`, which shows, restores and focuses the
+   `main` window.
+5. Quit from the tray calls `tauri_plugin_single_instance::destroy` before
+   `std::process::exit(0)`. The direct exit skips the normal cleanup, and the
+   mutex must go first.
+
+`build-desktop.ps1` also changed. Windows PowerShell 5.1 turns the cargo
+progress on stderr into a terminating error while `$ErrorActionPreference` is
+`Stop`. The script now lowers that setting for the cargo call and checks the
+exit code.
+
+Evidence, measured with the release build and the daemon running:
+
+| Test | Result |
+| --- | --- |
+| Second start, window open | Second process exits in 0.08 s, exit code 0 |
+| Process count after a second start | 1 |
+| Tray icons after a second start | 1 |
+| Window minimized, then a second start | Restored, not minimized, foreground |
+| Window hidden by the close button, then a second start | Shown, foreground |
+| Two starts at the same time | One process, one window |
+| Start right after a hard kill | The new copy stays and shows its window |
+| Log | `a second copy started; show the window` |
+
+Open work:
+
+1. A native save dialog for export instead of the fixed Downloads name.
+2. Remember the window size and position.
+3. The app has no test for the guard. A unit test cannot start two Tauri
+   windows, so the table above is the record.
 
