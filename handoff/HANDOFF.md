@@ -201,6 +201,10 @@ orientation, no mirroring.
 | `crates/daemon/src/main.rs` | `streamdockd`: paint, poll, act, repaint, serve the editor |
 | `crates/daemon/src/panel.rs` | Panel thread: device owner, command queue, key reader |
 | `crates/daemon/src/painter.rs` | Tile encoding, animation clock, animation cache |
+| `crates/daemon/src/apps.rs` | Foreground app watch, per-app profile rules |
+| `crates/actions/src/http.rs` | Small HTTP client for the `http` action |
+| `crates/actions/src/plugin.rs` | External plugin host over stdin and stdout |
+| `crates/cli/src/update.rs` | Signed update manifest, WinHTTP fetch, version check |
 | `crates/daemon/src/tray.rs` | Tray icon and its menu on its own thread |
 | `crates/daemon/src/single.rs` | Named mutex, one daemon per machine |
 | `crates/daemon/build.rs` | App icon and version resource |
@@ -210,6 +214,9 @@ orientation, no mirroring.
 | `packaging/install.ps1` | Per-user install, autostart, Start menu shortcut |
 | `packaging/uninstall.ps1` | Remove the program, keep profiles on request |
 | `packaging/sign.ps1` | Sign both binaries with a certificate |
+| `packaging/streamdock.nsi` | Per-user NSIS installer script |
+| `build-nsis.ps1` | Build the NSIS installer when the tool is present |
+| `PRIVACY.md` | What is stored, and when the network is used |
 | `crates/cli/src/main.rs` | Command line and command handlers |
 
 Commands: `list`, `desc`, `init`, `watch`, `capture`, `brightness`, `led`,
@@ -520,8 +527,8 @@ Measured requirement: rotate by 270 degrees at the end, not at the start.
 | M3 (part done) | Key grid, key editor, live preview in a browser page | A user builds a 15 key page without a CLI |
 | M3 | Tauri UI with grid, key editor, drag and drop, live preview | A user builds a 15 key page without a CLI |
 | M4 (done) | Text, images, SVG, icons, GIF, phases, themes, zip export and import | A page with icons and one animation runs |
-| M5 | Per application profiles, HTTP actions, plugin host | A profile switches when the user changes application |
-| M6 (part done) | Installer and docs are in. Signing needs a certificate. Update check and privacy text are open. | A stranger can install and use it |
+| M5 (done) | Per application profiles, HTTP actions, plugin host | A profile switches when the user changes application |
+| M6 (part done) | Installer, privacy text and a signed update check are in. Code signing needs a certificate, and the NSIS build needs the tool. | A stranger can install and use it |
 
 ## 17. Open hardware questions
 
@@ -998,4 +1005,77 @@ Open work that this session added:
 4. Reduce the binary size: the release build is about 10 MB per binary.
    `opt-level = "z"`, `lto = true` and `panic = "abort"` are good next steps.
 5. An editor "about" box with the version and the Roboto notice.
+
+## 29. Session 2 part 11: M5, per-app profiles, HTTP actions and plugins
+
+Date: 2026-11-01. A profile can now follow the foreground application, and two
+new action types reach outside the daemon.
+
+| Test | Result |
+| --- | --- |
+| Foreground reader | Logged `chrome.exe`, then `OpenCode.exe` |
+| App switch | `chrome.exe` switched the daemon to the `Browser` profile |
+| Rules | Built from the `apps` list of every profile |
+| Default | The profile that the daemon started with |
+| HTTP GET and POST | Tested against a local server |
+| HTTP error | A 500 is a failure |
+| Plugin | A PowerShell plugin answered `{"ok":true}` |
+| Plugin timeout | A missing answer is an error |
+| Plugin error | `{"error":"..."}` reaches the log |
+
+Design notes:
+
+1. The foreground process is read with `GetForegroundWindow`,
+   `GetWindowThreadProcessId` and `QueryFullProcessImageNameW`. No hook and no
+   administrator rights are needed.
+2. The check runs once a second. A rule is `process name` to `profile name`,
+   lowercase on both sides.
+3. An app switch loads the profile from disk, sets the page to the first one,
+   paints and updates the editor state. Nothing is written.
+4. The rules rebuild after a save, an import or a reload.
+5. An `http` action opens one plain socket with a 3 second timeout. Only
+   `http://` is accepted, and the profile validation says why.
+6. A plugin is a program with a manifest. The daemon writes one JSON line and
+   reads one JSON line with a 5 second timeout. This keeps arbitrary code out
+   of the daemon and lets any language write a plugin.
+
+## 30. Session 2 part 12: privacy, first run, update check and an installer
+
+Date: 2026-11-01. The release story is now usable: a stranger can read what the
+program does, install it, and check for an update.
+
+| Test | Result |
+| --- | --- |
+| First run balloon | Shown by the tray when the profile is created |
+| Privacy text | `PRIVACY.md`, copied into the package |
+| Update check | A local signed `latest.json` reported `0.3.0` |
+| Bad signature | Refused by the verifier |
+| Version compare | `0.3.0` is newer than `0.2.0`, `1.0.0-beta` is newer than `0.9.0` |
+| WinHTTP fetch | Read a local HTTP response |
+| Install | Added the files, the autostart value and an "Apps and features" entry |
+| Uninstall | Removed the folder and the entry, kept the profiles |
+
+Design notes:
+
+1. The update manifest is Ed25519 signed. The signature covers the exact bytes
+   of `latest.json`.
+2. The public key in `crates/cli/src/update.rs` is the RFC 8032 test vector. It
+   is a placeholder, and the release process must replace it.
+3. The fetch uses WinHTTP, so `https://` works without a TLS crate.
+4. The check downloads only the manifest and the signature.
+5. The first run notice is a tray balloon, not a dialog, so the daemon starts
+   without a window.
+6. The PowerShell installer writes an uninstall entry under `HKCU`, so
+   "Apps and features" lists the program.
+7. `packaging/streamdock.nsi` and `build-nsis.ps1` build a per-user NSIS
+   installer. NSIS could not be installed here: winget needs elevation, and
+   SourceForge returned 403. The script is ready for a machine with NSIS.
+
+Open work that this session added:
+
+1. Build and test the NSIS installer on a machine with the toolchain.
+2. Replace the test update key, and host `latest.json` and its signature.
+3. An update check from the tray, with the result in a balloon.
+4. HTTP actions with headers, and HTTPS through WinHTTP.
+5. A plugin manifest with a version and a capability list.
 

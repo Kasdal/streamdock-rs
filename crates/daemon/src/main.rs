@@ -16,6 +16,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod apps;
 mod painter;
 mod panel;
 mod single;
@@ -45,7 +46,7 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static LOG_FILE: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
 
 /// Write one line to the log file, and to the console when there is one.
-fn log(message: impl AsRef<str>) {
+pub(crate) fn log(message: impl AsRef<str>) {
     let start = START.get_or_init(Instant::now);
     let line = format!("[{:>9.3}] {}", start.elapsed().as_secs_f64(), message.as_ref());
 
@@ -126,7 +127,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        say("streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank] [--verbose] [--no-ui] [--no-tray]");
+        say("streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank] [--verbose] [--no-ui] [--no-tray] [--no-auto-switch]");
         say("");
         say("  --profile NAME  profile to load, default Default");
         say("  --dir PATH      profile folder, default %LOCALAPPDATA%\\StreamDock\\profiles");
@@ -135,6 +136,7 @@ fn main() -> ExitCode {
         say("  --verbose       log every input report");
         say("  --no-ui         do not start the editor server");
         say("  --no-tray       do not show the tray icon");
+        say("  --no-auto-switch  keep one profile, ignore the app rules");
         return ExitCode::SUCCESS;
     }
 
@@ -160,10 +162,15 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(0);
     let blank_on_exit = !args.iter().any(|a| a == "--no-blank");
     let verbose = args.iter().any(|a| a == "--verbose");
+    let auto_switch = !args.iter().any(|a| a == "--no-auto-switch");
 
     let _guard = SingleInstance::acquire(single::MUTEX_NAME)?;
 
     let store = Store::new(&dir);
+    let first_run = store
+        .path_for(&profile_name)
+        .map(|path| !path.exists())
+        .unwrap_or(false);
     let mut profile = store.load_or_create(&profile_name)?;
     let pid = profile.device.product_id().unwrap_or(model::PID);
 
@@ -177,6 +184,14 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut panel = Panel::start(pid)?;
     let mut painter = Painter::new(store.dir().to_path_buf());
     let mut page = 0usize;
+    let mut auto = apps::AutoSwitch::build_verbose(&store, &profile.name, auto_switch, verbose);
+    if auto.enabled() {
+        log(format!(
+            "app switch on, {} rule(s), default profile {}",
+            auto.rule_count,
+            auto.default_profile()
+        ));
+    }
 
     // The editor talks to this thread through the channel. Only the panel
     // thread touches the device, so a save cannot race with a paint.
@@ -206,6 +221,16 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if first_run {
+        log("first run: created the starter profile");
+        if let Some(icon) = &tray {
+            icon.notify(
+                "Stream Dock",
+                "Keys can send keystrokes. Open the editor from the tray menu.",
+            );
+        }
+    }
+
     let started = Instant::now();
 
     loop {
@@ -218,6 +243,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 &mut painter,
                 &store,
                 &shared,
+                &mut auto,
             );
         }
 
@@ -236,6 +262,19 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if painter.tick(&panel) {
+            busy = true;
+        }
+
+        if let Some(target) = auto.check(Instant::now()) {
+            switch_profile(
+                &target,
+                &mut profile,
+                &mut page,
+                &panel,
+                &mut painter,
+                &store,
+                &shared,
+            );
             busy = true;
         }
 
@@ -367,6 +406,7 @@ fn handle_command(
     painter: &mut Painter,
     store: &Store,
     shared: &Arc<ipc::Shared>,
+    auto: &mut apps::AutoSwitch,
 ) {
     match command {
         ipc::Command::Save {
@@ -396,6 +436,7 @@ fn handle_command(
             if *page >= profile.pages.len() {
                 *page = profile.pages.len().saturating_sub(1);
             }
+            auto.rebuild(store);
             log(format!(
                 "profile saved by the editor, page {}",
                 profile.pages[*page].name
@@ -431,6 +472,7 @@ fn handle_command(
                 if *page >= profile.pages.len() {
                     *page = 0;
                 }
+                auto.rebuild(store);
                 log(format!(
                     "profile reloaded, page {}",
                     profile.pages[*page].name
@@ -454,6 +496,7 @@ fn handle_command(
             Ok(imported) => {
                 *profile = imported;
                 *page = 0;
+                auto.rebuild(store);
                 log(format!(
                     "profile {} imported, page {}",
                     profile.name, profile.pages[0].name
@@ -469,6 +512,34 @@ fn handle_command(
                 let _ = reply.send(ipc::Reply::Error(e.to_string()));
             }
         },
+    }
+}
+
+/// Switch to another profile that a foreground app asked for.
+fn switch_profile(
+    target: &str,
+    profile: &mut Profile,
+    page: &mut usize,
+    panel: &Panel,
+    painter: &mut Painter,
+    store: &Store,
+    shared: &Arc<ipc::Shared>,
+) {
+    if profile.name == target {
+        return;
+    }
+    match store.load(target) {
+        Ok(next) => {
+            *profile = next;
+            *page = 0;
+            log(format!("app switch to profile {}", profile.name));
+            paint_page(panel, painter, profile, *page);
+            shared.update(|state| {
+                state.set_profile(profile.clone());
+                state.set_page(0);
+            });
+        }
+        Err(e) => log(format!("cannot switch to profile {target}: {e}")),
     }
 }
 

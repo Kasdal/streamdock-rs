@@ -10,8 +10,7 @@
 
 use std::time::Duration;
 
-use streamdock_store::profile::{Action, MediaCommand};
-use windows_sys::Win32::Foundation::HWND;
+use streamdock_store::profile::{Action, MediaCommand};use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY,
     KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
@@ -20,6 +19,9 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+pub mod http;
+pub mod plugin;
 
 /// What the daemon must do after an action.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,6 +237,18 @@ pub fn run_one(action: &Action) -> Result<Effect> {
         Action::Brightness { value } => Ok(Effect::SetBrightness(*value)),
         Action::Command { program, args } => {
             run_command(program, args)?;
+            Ok(Effect::None)
+        }
+        Action::Http { method, url, body } => {
+            http::request(method, url, body.as_deref())?;
+            Ok(Effect::None)
+        }
+        Action::Plugin {
+            id,
+            action,
+            settings,
+        } => {
+            plugin::run(id, action, settings)?;
             Ok(Effect::None)
         }
     }

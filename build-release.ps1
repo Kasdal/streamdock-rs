@@ -23,6 +23,7 @@ New-Item -ItemType Directory -Force $dist | Out-Null
 
 Copy-Item "target\release\streamdock.exe", "target\release\streamdockd.exe" $dist
 Copy-Item "README.md" $dist
+Copy-Item "PRIVACY.md" $dist
 Copy-Item "crates\render\assets\Roboto-OFL.txt" (Join-Path $dist "LICENSE-Roboto.txt")
 Copy-Item "packaging\install.ps1", "packaging\uninstall.ps1", "packaging\sign.ps1" $dist
 

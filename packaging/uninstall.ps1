@@ -5,6 +5,12 @@ param(
 
 $ErrorActionPreference = "Continue"
 
+$uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\StreamDock"
+$installed = (Get-ItemProperty -Path $uninstallKey -ErrorAction SilentlyContinue).InstallLocation
+if ($installed -and -not $PSBoundParameters.ContainsKey("Target")) {
+    $Target = $installed
+}
+
 Write-Host "Stream Dock uninstaller"
 Write-Host "  target: $Target"
 
@@ -19,6 +25,7 @@ if (Test-Path $cli) {
 $link = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Stream Dock.lnk"
 Remove-Item $link -ErrorAction SilentlyContinue
 Remove-Item $Target -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
 
 if (-not $KeepProfiles) {
     Remove-Item "$env:LOCALAPPDATA\StreamDock\profiles" -Recurse -Force -ErrorAction SilentlyContinue

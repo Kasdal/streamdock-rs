@@ -29,7 +29,11 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Profile export and import | verified: zip with the profile, assets and icons |
 | Editor export and import | verified over HTTP: download and upload |
 | Release package | verified: install and uninstall into a temp folder |
-| Unit tests | 155 tests, no device needed |
+| Per-app profiles | verified on hardware: chrome.exe switched the profile |
+| HTTP actions | tested against a local server |
+| Plugin host | tested with a PowerShell plugin |
+| Signed update check | verified with a local signed manifest |
+| Unit tests | 170 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -261,6 +265,15 @@ Image kinds: `color`, `text`, `file`, `svg`, `animation`, `icon`.
 The theme sets the background and the text colour for keys that do not set
 their own colour. The editor has two colour pickers for it.
 
+`apps` holds process names. When one of them owns the foreground window, the
+daemon switches to that profile. It returns to the profile it started with
+when no rule matches. `--no-auto-switch` turns this off.
+
+Action types: `hotkey`, `text`, `media`, `launch`, `multi`, `page`,
+`brightness`, `command`, `http`, `plugin`. An `http` action needs an `http://`
+URL; HTTPS is not supported yet. A `plugin` action calls
+`<profiles>\plugins\<id>`; see the plugin section.
+
 A `file` path may be absolute, or relative to the profile folder. The editor
 stores a dropped file as `assets/<name>-<hash>.<ext>`. JPEG, PNG, GIF and SVG
 are accepted.
@@ -283,9 +296,46 @@ Text uses the bundled Roboto font (Apache 2.0), so every installation looks the
 same. Set `STREAMDOCK_FONT` to a font file to override it. The 5x7 bitmap font
 is the fallback when no font can be loaded.
 
-Action types: `hotkey`, `text`, `media`, `launch`, `multi`, `page`,
-`brightness`, `command`. A `command` action runs a program, so a profile with
-one needs an explicit opt in before a release build accepts it.
+A `command` action runs a program, so a profile with one needs an explicit opt
+in before a release build accepts it.
+
+## Plugins
+
+A plugin is a folder with a `manifest.json` and a program:
+
+```json
+{ "command": "plugin.exe", "args": [] }
+```
+
+The daemon starts the program, writes one JSON line and reads one JSON line:
+
+```
+out: {"action":"play","settings":{"volume":20}}
+in:  {"ok":true}          or  {"error":"why"}
+```
+
+The plugin has 5 seconds to answer. Any language can write a plugin, and no
+code runs inside the daemon. Plugins live in `<profiles>\plugins\<id>`.
+
+## Update check
+
+`streamdock update check --url URL` fetches `latest.json` and
+`latest.json.sig`, checks the Ed25519 signature and compares the version. It
+downloads nothing.
+
+```json
+{ "version": "0.3.0", "url": "https://example/StreamDock-0.3.0.zip",
+  "sha256": "…", "notes": "Faster paint" }
+```
+
+The build ships the RFC 8032 test key as a placeholder. Replace
+`PUBLIC_KEY_HEX` in `crates/cli/src/update.rs` with your release key.
+`streamdock update sign --file latest.json --secret HEX` prints the signature.
+
+## Privacy
+
+`PRIVACY.md` states what the program stores, when it uses the network, and
+what a key can do. The data lives in `%LOCALAPPDATA%\StreamDock`.
 
 ## Install
 
@@ -298,10 +348,15 @@ portable package plus a zip under `dist\`.
 ```
 
 `install.ps1` copies the program to `%LOCALAPPDATA%\StreamDock\bin`, adds the
-per-user autostart value and creates a Start menu shortcut. Use `-NoAutostart`
-or `-NoShortcut` to skip either step, and `-Target PATH` for another folder.
-`uninstall.ps1` removes the program. It keeps profiles when you pass
-`-KeepProfiles`.
+per-user autostart value, creates a Start menu shortcut and writes an entry in
+"Apps and features". Use `-NoAutostart` or `-NoShortcut` to skip either step,
+and `-Target PATH` for another folder. `uninstall.ps1` removes the program. It
+keeps profiles when you pass `-KeepProfiles`.
+
+`build-nsis.ps1` builds a per-user NSIS installer from `packaging\streamdock.nsi`
+when NSIS is installed (`winget install NSIS.NSIS`). The script needs no
+administrator rights. The NSIS toolchain was not available on the machine that
+built this package, so the installer was not produced here.
 
 `sign.ps1` signs both binaries with `signtool`. Set `STREAMDOCK_CERT` to a
 `.pfx` file and `STREAMDOCK_CERT_PASSWORD` to its password. Signing needs the

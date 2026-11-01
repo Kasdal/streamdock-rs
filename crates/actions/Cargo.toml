@@ -6,5 +6,7 @@ license.workspace = true
 description = "Action engine: hotkeys, text, media keys, launch and multi actions"
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
 streamdock-store = { path = "../store" }
 windows-sys.workspace = true

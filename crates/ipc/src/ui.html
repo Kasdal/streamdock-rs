@@ -38,6 +38,8 @@
   .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
   .tabs button { background: var(--panel); color: var(--dim); border: 1px solid var(--line); }
   .tabs button.active { color: var(--text); border-color: var(--accent); }
+  .apps-row { margin-bottom: 12px; max-width: 520px; }
+  .apps-row input { width: 100%; }
   .grid {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 0.8fr);
@@ -137,6 +139,11 @@
 <main>
   <section>
     <div id="tabs" class="tabs"></div>
+    <div class="apps-row">
+      <label>Switch to this profile for these apps
+        <input id="f-apps" type="text" placeholder="obs64.exe, Photoshop.exe">
+      </label>
+    </div>
     <div id="grid" class="grid"></div>
     <div class="buttons" style="margin-top:12px">
       <button id="page-add">Add page</button>
@@ -572,6 +579,7 @@ async function refresh() {
       drawTabs();
       drawGrid();
       showTheme();
+      showApps();
       if (pageChanged) fillEditor();
     }
   } catch (e) {
@@ -605,6 +613,32 @@ async function applyTheme() {
       foreground: $("theme-fg").value,
     };
     await saveProfile(profile, "theme saved", state.rev);
+  } catch (e) {
+    reportError(e);
+  }
+}
+
+/// Show the app rules of the profile.
+function showApps() {
+  if (!state) return;
+  const apps = Array.isArray(state.profile.apps) ? state.profile.apps : [];
+  $("f-apps").value = apps.join(", ");
+}
+
+/// Save the comma separated app list.
+async function applyApps() {
+  try {
+    const apps = $("f-apps")
+      .value.split(",")
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0);
+    const profile = copyProfile();
+    profile.apps = apps;
+    await saveProfile(
+      profile,
+      apps.length ? "app rules saved" : "app rules cleared",
+      state.rev
+    );
   } catch (e) {
     reportError(e);
   }
@@ -673,6 +707,7 @@ async function importProfileFile(file) {
     drawGrid();
     fillEditor();
     showTheme();
+    showApps();
     message("imported " + state.profile.name, "ok");
   } catch (e) {
     message(e.message, "bad");
@@ -748,6 +783,7 @@ $("import-file").addEventListener("change", (event) => {
 $("brightness").addEventListener("change", (event) => setBrightness(event.target.value));
 $("theme-bg").addEventListener("change", applyTheme);
 $("theme-fg").addEventListener("change", applyTheme);
+$("f-apps").addEventListener("change", applyApps);
 $("f-icon-file").addEventListener("change", (event) => {
   const file = event.target.files && event.target.files[0];
   if (file) uploadIcon(file);
@@ -769,6 +805,7 @@ document.addEventListener("keydown", (event) => {
     drawGrid();
     fillEditor();
     showTheme();
+    showApps();
     $("brightness").value = state.brightness === null ? 60 : state.brightness;
     $("brightness-value").textContent = $("brightness").value;
   } catch (e) {

@@ -51,6 +51,9 @@ pub struct Profile {
     /// Colour scheme for keys without an explicit colour.
     #[serde(default)]
     pub theme: Theme,
+    /// Process names that switch to this profile, for example `obs64.exe`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub apps: Vec<String>,
     /// Pages in display order.
     #[serde(default)]
     pub pages: Vec<Page>,
@@ -218,6 +221,21 @@ pub enum Action {
         #[serde(default)]
         args: Vec<String>,
     },
+    /// Send one HTTP request. Only `http://` is supported.
+    Http {
+        #[serde(default = "default_method")]
+        method: String,
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body: Option<String>,
+    },
+    /// Call one external plugin.
+    Plugin {
+        id: String,
+        action: String,
+        #[serde(default)]
+        settings: serde_json::Value,
+    },
 }
 
 /// Media keys that Windows understands.
@@ -270,7 +288,7 @@ impl Profile {
             version: VERSION,
             name: name.to_string(),
             device: DeviceSpec::default(),
-            theme: Theme::default(),
+            theme: Theme::default(),            apps: Vec::new(),
             pages: vec![Page::new("Main")],
         }
     }
@@ -292,7 +310,7 @@ impl Profile {
             version: VERSION,
             name: "Default".to_string(),
             device: DeviceSpec::default(),
-            theme: Theme::default(),
+            theme: Theme::default(),            apps: Vec::new(),
             pages: vec![page],
         }
     }
@@ -354,7 +372,7 @@ impl Profile {
             version: VERSION,
             name: "Demo".to_string(),
             device: DeviceSpec::default(),
-            theme: Theme::default(),
+            theme: Theme::default(),            apps: Vec::new(),
             pages: vec![main, second],
         }
     }
@@ -370,6 +388,18 @@ impl Profile {
 
         parse_color(&self.theme.background)?;
         parse_color(&self.theme.foreground)?;
+
+        for app in &self.apps {
+            if app.trim().is_empty() {
+                return Err("an app name is empty".into());
+            }
+            if app.chars().count() > 64 {
+                return Err(format!("app name {app:?} is longer than 64 characters"));
+            }
+            if app.contains('\\') || app.contains('/') {
+                return Err(format!("app name {app:?} must be a process name, not a path"));
+            }
+        }
 
         let mut seen = std::collections::BTreeSet::new();
         for page in &self.pages {
@@ -458,6 +488,8 @@ impl Action {
             Action::Page { target } => format!("page {target}"),
             Action::Brightness { value } => format!("brightness {value}"),
             Action::Command { program, .. } => format!("command {program}"),
+            Action::Http { method, url, .. } => format!("http {method} {url}"),
+            Action::Plugin { id, action, .. } => format!("plugin {id}/{action}"),
         }
     }
 }
@@ -518,6 +550,31 @@ fn validate_action(action: &Action, depth: u32) -> Result<(), String> {
                 return Err("command program is empty".into());
             }
         }
+        Action::Http { method, url, .. } => {
+            let method = method.to_ascii_uppercase();
+            if !matches!(method.as_str(), "GET" | "POST" | "PUT" | "DELETE") {
+                return Err(format!("HTTP method {method} is not supported"));
+            }
+            if !url.starts_with("http://") {
+                return Err(format!(
+                    "HTTP URL {url:?} must start with http://. HTTPS is not supported yet."
+                ));
+            }
+        }
+        Action::Plugin { id, action, .. } => {
+            if id.trim().is_empty() {
+                return Err("plugin id is empty".into());
+            }
+            if !id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                return Err(format!("plugin id {id:?} may hold only letters, digits, - and _"));
+            }
+            if action.trim().is_empty() {
+                return Err("plugin action is empty".into());
+            }
+        }
         Action::Media { .. } => {}
     }
     Ok(())
@@ -541,6 +598,10 @@ fn default_background() -> String {
 
 fn default_foreground() -> String {
     "#f0f0f0".to_string()
+}
+
+fn default_method() -> String {
+    "GET".to_string()
 }
 
 #[cfg(test)]
@@ -577,7 +638,7 @@ mod tests {
             version: VERSION,
             name: "Default".into(),
             device: DeviceSpec::default(),
-            theme: Theme::default(),
+            theme: Theme::default(),            apps: Vec::new(),
             pages: vec![page, Page::new("Media")],
         }
     }

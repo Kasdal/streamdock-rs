@@ -12,7 +12,8 @@ use std::thread::{self, JoinHandle};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE,
+    NIM_MODIFY, NOTIFYICONDATAW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
@@ -32,6 +33,12 @@ const MENU_QUIT: usize = 3;
 
 /// Message that the shell sends for the icon.
 const WM_TRAY: u32 = WM_APP + 1;
+
+/// Message that shows a queued balloon.
+const WM_TRAY_INFO: u32 = WM_APP + 2;
+
+/// Balloon text waiting for the tray thread.
+static BALLOON: Mutex<Option<(String, String)>> = Mutex::new(None);
 
 struct Context {
     url: String,
@@ -72,6 +79,20 @@ impl Tray {
         }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
+        }
+    }
+
+    /// Show a balloon message next to the icon.
+    pub fn notify(&self, title: &str, body: &str) {
+        if let Ok(mut slot) = BALLOON.lock() {
+            *slot = Some((title.to_string(), body.to_string()));
+        }
+        let handle = *self.window.lock().expect("tray window lock");
+        if handle != 0 {
+            // SAFETY: the handle is the window that this tray created.
+            unsafe {
+                PostMessageW(handle as HWND, WM_TRAY_INFO, 0, 0);
+            }
         }
     }
 }
@@ -193,6 +214,10 @@ unsafe extern "system" fn window_proc(
             }
             0
         }
+        WM_TRAY_INFO => {
+            show_balloon(handle);
+            0
+        }
         WM_CLOSE => {
             DestroyWindow(handle);
             0
@@ -205,8 +230,29 @@ unsafe extern "system" fn window_proc(
     }
 }
 
-unsafe fn show_menu(handle: HWND) {
-    let pointer = GetWindowLongPtrW(handle, GWLP_USERDATA) as *mut Context;
+/// Show the queued balloon next to the icon.
+unsafe fn show_balloon(handle: HWND) {
+    let Some((title, body)) = BALLOON.lock().ok().and_then(|mut slot| slot.take()) else {
+        return;
+    };
+
+    let mut icon: NOTIFYICONDATAW = std::mem::zeroed();
+    icon.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
+    icon.hWnd = handle;
+    icon.uID = 1;
+    icon.uFlags = NIF_INFO;
+    icon.dwInfoFlags = NIIF_INFO;
+
+    let title: Vec<u16> = title.encode_utf16().take(63).collect();
+    icon.szInfoTitle[..title.len()].copy_from_slice(&title);
+
+    let body: Vec<u16> = body.encode_utf16().take(255).collect();
+    icon.szInfo[..body.len()].copy_from_slice(&body);
+
+    Shell_NotifyIconW(NIM_MODIFY, &icon);
+}
+
+unsafe fn show_menu(handle: HWND) {    let pointer = GetWindowLongPtrW(handle, GWLP_USERDATA) as *mut Context;
     if pointer.is_null() {
         return;
     }

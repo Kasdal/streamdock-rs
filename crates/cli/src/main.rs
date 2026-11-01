@@ -15,6 +15,7 @@
 //!   send                     write one raw report (explicit opt in)
 
 mod autostart;
+mod update;
 
 use std::time::{Duration, Instant};
 
@@ -47,6 +48,8 @@ fn usage() {
     eprintln!("  preview [--name N] [--page N] [--out FILE] [--dir PATH]");
     eprintln!("  ui");
     eprintln!("  autostart <install|remove|status> [--profile N]");
+    eprintln!("  update check --url URL [--key HEX]");
+    eprintln!("  update sign --file latest.json --secret HEX");
     eprintln!("  send --hex 4352540000444953 --i-understand");
 }
 
@@ -96,6 +99,7 @@ fn main() {
         "preview" => preview(&args),
         "ui" => ui(),
         "autostart" => autostart_cmd(&args),
+        "update" => update_cmd(&args),
         "send" => send(&args),
         "-h" | "--help" | "help" => {
             usage();
@@ -808,6 +812,55 @@ fn autostart_cmd(args: &[String]) -> Result<()> {
         other => {
             return Err(Error::Message(format!(
                 "unknown autostart command: {other}. Use install, remove or status"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn update_cmd(args: &[String]) -> Result<()> {
+    let sub = args.get(1).map(|s| s.as_str()).unwrap_or("check");
+
+    match sub {
+        "check" => {
+            let url = arg_value(args, "--url")
+                .ok_or_else(|| Error::Message("update check needs --url URL".into()))?;
+            let key =
+                arg_value(args, "--key").unwrap_or_else(|| update::PUBLIC_KEY_HEX.to_string());
+            let outcome =
+                update::check(&url, &key, env!("CARGO_PKG_VERSION")).map_err(Error::Message)?;
+
+            println!("current version {}", outcome.current);
+            println!(
+                "server version {} at {}",
+                outcome.manifest.version, outcome.manifest.url
+            );
+            if !outcome.manifest.sha256.is_empty() {
+                println!("sha256 {}", outcome.manifest.sha256);
+            }
+            if outcome.newer {
+                println!("an update is available");
+                if !outcome.manifest.notes.is_empty() {
+                    println!("notes: {}", outcome.manifest.notes);
+                }
+            } else {
+                println!("this program is up to date");
+            }
+        }
+        "sign" => {
+            let file = arg_value(args, "--file")
+                .ok_or_else(|| Error::Message("update sign needs --file PATH".into()))?;
+            let secret = arg_value(args, "--secret")
+                .ok_or_else(|| Error::Message("update sign needs --secret HEX".into()))?;
+            let bytes = std::fs::read(&file)
+                .map_err(|e| Error::Message(format!("cannot read {file}: {e}")))?;
+            let signature = update::sign(&bytes, &secret).map_err(Error::Message)?;
+            println!("{signature}");
+        }
+        other => {
+            return Err(Error::Message(format!(
+                "unknown update command: {other}. Use check or sign"
             )));
         }
     }

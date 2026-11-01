@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://example.invalid/streamdock-rs"
 
 [workspace.dependencies]
+ed25519-dalek = "2"
 jpeg-decoder = "0.3"
 jpeg-encoder = "0.6"
 serde = { version = "1", features = ["derive"] }
@@ -25,6 +26,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Console",
     "Win32_System_Registry",
     "Win32_Graphics_Gdi",
+    "Win32_Networking_WinHttp",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
