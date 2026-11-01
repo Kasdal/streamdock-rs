@@ -1327,10 +1327,10 @@ Evidence, measured with the release build and the daemon running:
 
 Open work:
 
-1. A native save dialog for export instead of the fixed Downloads name.
-2. Remember the window size and position.
-3. The app has no test for the guard. A unit test cannot start two Tauri
+1. The app has no test for the guard. A unit test cannot start two Tauri
    windows, so the table above is the record.
+2. ~~A native save dialog for export.~~ Closed in section 36.
+3. ~~Remember the window size and position.~~ Closed in section 37.
 
 ## 36. Session 3 part 2: native save dialog for export
 
@@ -1374,8 +1374,63 @@ That variable was set for the test only.
 
 Open work:
 
-1. Remember the window size and position.
-2. The export writes with `std::fs::write`, so a large profile holds the zip in
+1. The export writes with `std::fs::write`, so a large profile holds the zip in
    memory twice. Fine for the current sizes.
-3. A dialog test needs a human or UI Automation. The table above is the record.
+2. A dialog test needs a human or UI Automation. The table above is the record.
+
+## 37. Session 3 part 3: the window comes back where it was
+
+Date: 2026-11-01. The window keeps its place, its size and its maximized
+state across runs.
+
+How it works:
+
+1. The shape lives in `%LOCALAPPDATA%\StreamDock\window.json`:
+   `{ "x": 300, "y": 200, "width": 1084, "height": 721, "maximized": false }`.
+2. The numbers are physical pixels. `x` and `y` are the outer corner of the
+   window, `width` and `height` are its inner size. The build sets the same
+   pair, so a save and a restore do not walk the window down the screen.
+3. The app builds the window hidden, applies the saved shape, then shows it.
+   The window never appears at the default place first.
+4. A save waits 500 ms after the last move or resize. This is the second
+   design: the first one wrote at once and used a 400 ms throttle. The
+   maximize transition sends a resize before it sets the maximized flag, so
+   the first design saved the maximized rect as the normal one, and the
+   throttle then dropped the event that would have fixed it.
+5. While the window is maximized, the file keeps the rect from before the
+   maximize and sets `maximized`. A restore then sets the size, the place and
+   the maximize.
+6. A minimized window is never written, because it reports a place off the
+   screen.
+7. A saved place needs 160 by 120 pixels on a monitor work area. If no monitor
+   shows it, the window opens centred with the saved size.
+8. The close button and Quit write at once, so a window that is only hidden
+   still keeps its place.
+9. A still window writes nothing.
+
+Evidence, measured with the release build:
+
+| Test | Result |
+| --- | --- |
+| First run, no file | 1320 by 860 inner, no `window.json` |
+| Move and resize to 220,160 1100x760 | File holds 220,160 and 1084x721 |
+| Restart | Same place and size, log says `restored the window` |
+| Maximize, then wait | File keeps 220,160 and sets `maximized: true` |
+| Restart after a maximize | Window opens maximized |
+| Unmaximize after that | Back to 220,160 1100x760 |
+| Save a place off the screen, then start | Centred, 1100x760 kept |
+| Move, then press the close button at once | New place written, window hidden |
+| Minimize, then wait | File unchanged |
+| Leave the window alone for 3 s | File unchanged |
+
+The window handle came from `FindWindow("Tauri Window", "Stream Dock")`.
+`Process.MainWindowHandle` returns 0 for a hidden window, and a rect read from
+handle 0 gave a false result once. Do not use it for this check.
+
+Open work:
+
+1. The app has no test for the shape; the table above is the record.
+2. The shape is physical pixels only. A change of display scale keeps the
+   place, but the window keeps its physical size.
+
 

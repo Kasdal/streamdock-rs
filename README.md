@@ -35,7 +35,7 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Plugin host | tested with a PowerShell plugin |
 | Signed update check | verified with a local signed manifest |
 | Preloaded tools profile | verified on hardware: media, pages, Notepad |
-| Desktop window | verified: Tauri window, bundled UI, tray menu |
+| Desktop window | verified: one instance, native save dialog, window place |
 | Unit tests | 175 tests, no device needed |
 ## Device facts (measured)
 
@@ -368,7 +368,8 @@ the API.
 
 | Part | Behavior |
 | --- | --- |
-| Window | 1320 by 860, dark Elgato-style editor |
+| Window | 1320 by 860 on the first run, dark Elgato-style editor |
+| Window place | Comes back where it was, at the same size and state |
 | Close button | Hides the window; the app keeps running in the tray |
 | Tray menu | Show editor, Reload profile, Quit |
 | Second start | The running window comes forward; the second copy exits |
@@ -378,6 +379,11 @@ the API.
 One copy of the window runs at a time. The app holds a named mutex, so a
 second start hands its command line to the first copy and exits. The first
 copy shows and focuses its window.
+
+The window comes back where it was. The app writes the place, the size and the
+maximized state to `%LOCALAPPDATA%\StreamDock\window.json`, 500 ms after the
+window stops moving. A saved place that no monitor shows any more is dropped,
+and the window opens centred instead.
 
 Export asks for a file with the Windows save dialog. The dialog opens in the
 Downloads folder and suggests `<profile>.zip`. The export command fetches the
