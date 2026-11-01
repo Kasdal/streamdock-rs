@@ -35,9 +35,8 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Plugin host | tested with a PowerShell plugin |
 | Signed update check | verified with a local signed manifest |
 | Preloaded tools profile | verified on hardware: media, pages, Notepad |
-| Desktop window | verified: Tauri window, starts the daemon, shows the editor |
-| Unit tests | 172 tests, no device needed |
-
+| Desktop window | verified: Tauri window, bundled UI, tray menu |
+| Unit tests | 175 tests, no device needed |
 ## Device facts (measured)
 
 Model: AJAZZ AKP-153E.
@@ -362,9 +361,18 @@ what a key can do. The data lives in `%LOCALAPPDATA%\StreamDock`.
 `streamdock-desktop.exe` is the native window for the editor. It has no browser
 chrome and its own task bar entry.
 
-It finds the daemon through `runtime.json`. When the daemon is not running, it
-starts `streamdockd.exe` next to itself, waits for the endpoint and then shows
-the editor.
+The editor page is bundled in the program, so the window opens even when the
+daemon is down. The window finds the daemon through `runtime.json`. When the
+daemon is not running, it starts `streamdockd.exe` next to itself and waits for
+the API.
+
+| Part | Behavior |
+| --- | --- |
+| Window | 1320 by 860, dark Elgato-style editor |
+| Close button | Hides the window; the app keeps running in the tray |
+| Tray menu | Show editor, Reload profile, Quit |
+| Export | Writes `StreamDock-profile.zip` to your Downloads folder |
+| API | The page calls the daemon API with the token, from a CORS allowlist |
 
 The desktop window is a Tauri 2 app, so it needs the MSVC toolchain. The rest of
 the project builds with GNU, so the crate sits outside the workspace.

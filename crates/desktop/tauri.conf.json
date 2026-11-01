@@ -4,10 +4,11 @@
   "version": "0.2.0",
   "identifier": "com.streamdock.desktop",
   "build": {
-    "frontendDist": "webui"
+    "frontendDist": "../ipc/src/ui"
   },
   "app": {
     "windows": [],
+    "withGlobalTauri": true,
     "security": {
       "csp": null
     }

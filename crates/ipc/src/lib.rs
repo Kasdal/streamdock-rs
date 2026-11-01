@@ -41,7 +41,7 @@ pub const MAX_ASSET_BYTES: usize = 8 * 1024 * 1024;
 pub const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The editor page.
-const UI: &str = include_str!("ui.html");
+const UI: &str = include_str!("ui/index.html");
 
 /// What the client may read.
 #[derive(Debug, Clone, Serialize)]
@@ -271,7 +271,44 @@ fn handle_connection(mut stream: TcpStream, context: &Context) {
     let _ = http::write_response(&mut stream, &response);
 }
 
+/// Origins that may call the API from a desktop webview.
+const ALLOWED_ORIGINS: [&str; 3] = [
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "tauri://localhost",
+];
+
 fn route(context: &Context, request: &Request) -> Response {
+    let origin = request
+        .header("origin")
+        .filter(|origin| ALLOWED_ORIGINS.contains(origin))
+        .map(|origin| origin.to_string());
+
+    if request.method == "OPTIONS" && request.path.starts_with("/api/") {
+        return match origin {
+            Some(origin) => Response::empty(204)
+                .with_header("Access-Control-Allow-Origin", &origin)
+                .with_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+                .with_header("Access-Control-Allow-Headers", "X-Token, Content-Type")
+                .with_header("Access-Control-Max-Age", "600")
+                .with_header("Vary", "Origin"),
+            None => Response::message(403, "this origin is not allowed"),
+        };
+    }
+
+    let mut response = route_inner(context, request);
+    if let Some(origin) = origin {
+        response
+            .headers
+            .push(("Access-Control-Allow-Origin".to_string(), origin));
+        response
+            .headers
+            .push(("Vary".to_string(), "Origin".to_string()));
+    }
+    response
+}
+
+fn route_inner(context: &Context, request: &Request) -> Response {
     let method = request.method.as_str();
     let path = request.path.as_str();
 
@@ -542,6 +579,7 @@ fn tile_image(context: &Context, request: &Request) -> Response {
             content_type: "image/jpeg",
             body: jpeg,
             download_name: None,
+            headers: Vec::new(),
         },
         Err(message) => Response::message(500, message),
     }
@@ -1022,8 +1060,7 @@ mod tests {
     }
 
     #[test]
-    fn an_import_is_forwarded_to_the_daemon() {
-        let (context, commands) = context_with_commands();
+    fn an_import_is_forwarded_to_the_daemon() {        let (context, commands) = context_with_commands();
         let mut request = request("POST", "/api/import");
         request
             .headers
@@ -1047,5 +1084,62 @@ mod tests {
         }
 
         assert_eq!(handle.join().expect("thread").status, 200);
+    }
+
+    #[test]
+    fn the_tauri_origin_gets_cors_headers() {
+        let context = context();
+        let mut request = request("GET", "/api/state");
+        request
+            .headers
+            .push(("x-token".to_string(), "abc123".to_string()));
+        request
+            .headers
+            .push(("origin".to_string(), "http://tauri.localhost".to_string()));
+
+        let response = route(&context, &request);
+        assert_eq!(response.status, 200);
+        assert!(response
+            .headers
+            .iter()
+            .any(|(name, value)| name == "Access-Control-Allow-Origin"
+                && value == "http://tauri.localhost"));
+    }
+
+    #[test]
+    fn a_preflight_gets_no_content() {
+        let context = context();
+        let mut request = request("OPTIONS", "/api/profile");
+        request
+            .headers
+            .push(("origin".to_string(), "http://tauri.localhost".to_string()));
+
+        let response = route(&context, &request);
+        assert_eq!(response.status, 204);
+        assert!(response
+            .headers
+            .iter()
+            .any(|(name, _)| name == "Access-Control-Allow-Headers"));
+        assert!(response
+            .headers
+            .iter()
+            .any(|(name, _)| name == "Access-Control-Allow-Methods"));
+    }
+
+    #[test]
+    fn another_origin_gets_no_cors_and_no_preflight() {
+        let context = context();
+        let mut get = request("GET", "/api/state");
+        get.headers
+            .push(("x-token".to_string(), "abc123".to_string()));
+        get.headers
+            .push(("origin".to_string(), "https://example.com".to_string()));
+        assert!(route(&context, &get).headers.is_empty());
+
+        let mut preflight = request("OPTIONS", "/api/state");
+        preflight
+            .headers
+            .push(("origin".to_string(), "https://example.com".to_string()));
+        assert_eq!(route(&context, &preflight).status, 403);
     }
 }

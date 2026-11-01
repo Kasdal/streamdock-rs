@@ -54,6 +54,8 @@ pub struct Response {
     pub body: Vec<u8>,
     /// When set, the browser saves the body under this name.
     pub download_name: Option<String>,
+    /// Extra headers, for example CORS.
+    pub headers: Vec<(String, String)>,
 }
 
 impl Response {
@@ -64,6 +66,7 @@ impl Response {
             content_type: "application/json; charset=utf-8",
             body: body.into_bytes(),
             download_name: None,
+            headers: Vec::new(),
         }
     }
 
@@ -80,6 +83,7 @@ impl Response {
             content_type: "text/html; charset=utf-8",
             body: body.as_bytes().to_vec(),
             download_name: None,
+            headers: Vec::new(),
         }
     }
 
@@ -90,7 +94,25 @@ impl Response {
             content_type,
             body,
             download_name: Some(name),
+            headers: Vec::new(),
         }
+    }
+
+    /// An empty response with a status code.
+    pub fn empty(status: u16) -> Self {
+        Self {
+            status,
+            content_type: "text/plain; charset=utf-8",
+            body: Vec::new(),
+            download_name: None,
+            headers: Vec::new(),
+        }
+    }
+
+    /// Add one header.
+    pub fn with_header(mut self, name: &str, value: &str) -> Self {
+        self.headers.push((name.to_string(), value.to_string()));
+        self
     }
 }
 
@@ -196,6 +218,10 @@ pub fn write_response(stream: &mut TcpStream, response: &Response) -> std::io::R
         head.push_str(&format!(
             "Content-Disposition: attachment; filename=\"{safe}\"\r\n"
         ));
+    }
+
+    for (name, value) in &response.headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
     }
 
     head.push_str("Connection: close\r\n\r\n");

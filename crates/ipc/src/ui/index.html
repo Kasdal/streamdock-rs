@@ -475,6 +475,10 @@ const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const KEY_COUNT = 18;
 const GRID_KEYS = 15;
 
+let token = TOKEN;
+let apiBase = "";
+const tauri = window.__TAURI__ || null;
+
 let state = null;
 let selected = 1;
 let tileVersion = Date.now();
@@ -486,11 +490,11 @@ const undoStack = [];
 const $ = (id) => document.getElementById(id);
 
 async function api(path, options = {}) {
-  const headers = { "X-Token": TOKEN, ...(options.headers || {}) };
+  const headers = { "X-Token": token, ...(options.headers || {}) };
   if (typeof options.body === "string" && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
-  const response = await fetch(path, { ...options, headers });
+  const response = await fetch(apiBase + path, { ...options, headers });
   const text = await response.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch (e) { data = { error: text }; }
@@ -528,8 +532,8 @@ function message(text, kind) {
 }
 
 function tileUrl(key) {
-  return "/api/tile?page=" + state.page + "&key=" + key + "&v=" + tileVersion +
-    "&token=" + encodeURIComponent(TOKEN);
+  return apiBase + "/api/tile?page=" + state.page + "&key=" + key + "&v=" + tileVersion +
+    "&token=" + encodeURIComponent(token);
 }
 
 /* ---------------- grid ---------------- */
@@ -1017,8 +1021,17 @@ async function dropImage(key, file) {
   }
 }
 
-function exportProfile() {
-  window.location.href = "/api/export?token=" + encodeURIComponent(TOKEN);
+async function exportProfile() {
+  if (tauri) {
+    try {
+      const path = await tauri.core.invoke("export_profile");
+      message("exported to " + path, "ok");
+    } catch (e) {
+      message(String(e), "bad");
+    }
+    return;
+  }
+  window.location.href = apiBase + "/api/export?token=" + encodeURIComponent(token);
 }
 
 async function importProfileFile(file) {
@@ -1093,7 +1106,27 @@ document.addEventListener("keydown", (event) => {
   undo();
 });
 
-(async function start() {
+async function connect() {
+  if (!tauri) return true;
+  const endpoint = await tauri.core.invoke("endpoint");
+  if (!endpoint) return false;
+  apiBase = "http://127.0.0.1:" + endpoint.port;
+  token = endpoint.token;
+  return true;
+}
+
+async function boot() {
+  if (tauri) {
+    let ready = false;
+    try { ready = await connect(); } catch (e) { ready = false; }
+    if (!ready) {
+      $("status-text").textContent = "starting the daemon";
+      message("waiting for the panel daemon...", "bad");
+      setTimeout(boot, 1000);
+      return;
+    }
+  }
+
   try {
     state = await api("/api/state");
     drawTabs();
@@ -1111,7 +1144,9 @@ document.addEventListener("keydown", (event) => {
   }
   loadIcons();
   setInterval(refresh, 1500);
-})();
+}
+
+boot();
 </script>
 </body>
 </html>

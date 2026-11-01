@@ -1233,10 +1233,57 @@ The first two window builds failed for setup reasons, not code reasons:
 
 Open work:
 
-1. Bundle the frontend in the app instead of loading the daemon page. That
-   needs Tauri commands or CORS.
-2. Add a tray menu to the window itself.
+1. ~~Bundle the frontend in the app instead of loading the daemon page.~~
+   Closed in section 34.
+2. ~~Add a tray menu to the window itself.~~ Closed in section 34.
 3. Sign `streamdock-desktop.exe` and include it in the NSIS script.
 4. Remember the window size and position.
 5. A first-run tour that points at the page list and the key editor.
+
+## 34. Session 2 part 16: bundled editor and the app tray
+
+Date: 2026-11-01. The window no longer loads the page from the daemon. The
+editor is bundled in the app, and the window has its own tray menu.
+
+How the pieces fit:
+
+1. `crates/ipc/src/ui/index.html` is the only copy of the editor. The daemon
+   serves it with `include_str!`, and Tauri bundles it from the same folder.
+2. The page checks `window.__TAURI__`. In the window it calls the `endpoint`
+   command for the port and token. In a browser it reads the token from the
+   URL and uses the same origin.
+3. A CORS allowlist in the daemon answers the Tauri origin
+   (`http://tauri.localhost`, `https://tauri.localhost`, `tauri://localhost`)
+   for `/api/*`, including the preflight. Other origins get no CORS headers.
+4. Tiles are `<img>` requests with the token in the query, so they need no
+   CORS work.
+5. Export in the window is a Rust command: it fetches the zip and writes
+   `StreamDock-profile.zip` in the Downloads folder.
+6. The app starts the daemon with `--no-tray`, so the window owns the only
+   tray icon.
+7. Closing the window hides it. The tray has Show editor, Reload profile and
+   Quit.
+8. Quit calls `app.exit(0)` and then `std::process::exit(0)`. The first run of
+   the menu closed nothing, because the tray kept the loop alive.
+
+Evidence:
+
+| Test | Result |
+| --- | --- |
+| Bundled page | The window shows the editor while the daemon serves no page |
+| Endpoint command | The page received the port and token |
+| CORS | API calls and the preflight work from the Tauri origin |
+| Tiles | 18 tiles load cross-origin |
+| Browser page | 18 keys, 4 pages, no console errors, no overflow |
+| Tray menu | Show editor, Reload profile and Quit |
+| Close button | Hides the window, the app keeps running |
+| Quit | Process gone, daemon still running |
+| Installer | The setup ships the new window and the shortcut opens it |
+
+Open work:
+
+1. A single-instance guard for the app. A second start adds a second tray icon.
+2. A native save dialog for export instead of the fixed Downloads name.
+3. Remember the window size and position.
+4. Tighten the CORS list if another origin is ever served.
 
