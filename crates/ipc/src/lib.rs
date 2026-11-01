@@ -100,6 +100,7 @@ impl State {
 /// State shared between the daemon loop and the HTTP threads.
 pub struct Shared {
     inner: Mutex<State>,
+    strip: Mutex<Option<Arc<[u8]>>>,
 }
 
 impl Shared {
@@ -107,6 +108,7 @@ impl Shared {
     pub fn new(state: State) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(state),
+            strip: Mutex::new(None),
         })
     }
 
@@ -120,6 +122,16 @@ impl Shared {
         let mut state = self.inner.lock().expect("state lock");
         change(&mut state);
     }
+
+    /// Keep the last side strip image, so the editor can show it.
+    pub fn set_strip(&self, jpeg: Arc<[u8]>) {
+        *self.strip.lock().expect("strip lock") = Some(jpeg);
+    }
+
+    /// The last side strip image, when the daemon drew one.
+    pub fn strip(&self) -> Option<Arc<[u8]>> {
+        self.strip.lock().expect("strip lock").clone()
+    }
 }
 
 /// Answer from the daemon for one command.
@@ -130,6 +142,17 @@ pub enum Reply {
     Conflict(State),
     /// The change was refused.
     Error(String),
+    /// Places that match a name, for the weather widget.
+    Places(Vec<PlaceInfo>),
+}
+
+/// One place from the geocoding lookup.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PlaceInfo {
+    pub name: String,
+    pub country: String,
+    pub latitude: f64,
+    pub longitude: f64,
 }
 
 /// Sender for one reply.
@@ -156,6 +179,8 @@ pub enum Command {
         new_name: Option<String>,
         reply: ReplySender,
     },
+    /// Look up a place name for the weather widget.
+    Geocode { query: String, reply: ReplySender },
 }
 
 /// A running server.
@@ -394,6 +419,16 @@ fn route_inner(context: &Context, request: &Request) -> Response {
             }
             tile_image(context, request)
         }
+        ("GET", "/api/strip") => {
+            // An image tag cannot set a header, so the token is in the query.
+            if request.query_value("token") != Some(context.token.as_str()) {
+                return Response::message(401, "missing or wrong token");
+            }
+            match context.shared.strip() {
+                Some(jpeg) => Response::image(200, "image/jpeg", jpeg.to_vec()),
+                None => Response::message(503, "the daemon has not drawn the strip yet"),
+            }
+        }
         ("POST", "/api/asset") => {
             if !api_token_ok(context, request) {
                 return Response::message(401, "missing or wrong token");
@@ -424,6 +459,12 @@ fn route_inner(context: &Context, request: &Request) -> Response {
                 return Response::message(401, "missing or wrong token");
             }
             import_profile(context, request)
+        }
+        ("GET", "/api/geocode") => {
+            if request.query_value("token") != Some(context.token.as_str()) {
+                return Response::message(401, "missing or wrong token");
+            }
+            geocode(context, request)
         }
         _ => Response::message(404, "no such path"),
     }
@@ -700,12 +741,39 @@ fn roundtrip(context: &Context, build: impl FnOnce(ReplySender) -> Command) -> R
             Err(e) => Response::message(500, format!("cannot encode state: {e}")),
         },
         Ok(Reply::Error(message)) => Response::message(400, message),
+        Ok(Reply::Places(_)) => Response::message(500, "unexpected answer"),
         Err(_) => Response::message(500, "the daemon did not answer"),
     }
 }
 
-/// Token: 32 hex characters from the clock and the process ID.
-///
+/// Look up a place name for the weather widget.
+fn geocode(context: &Context, request: &Request) -> Response {
+    let query = match request.query_value("q") {
+        Some(value) if !value.trim().is_empty() => value.to_string(),
+        _ => return Response::message(400, "need a place name in q"),
+    };
+
+    let (reply, answer) = channel();
+    if context
+        .commands
+        .send(Command::Geocode { query, reply })
+        .is_err()
+    {
+        return Response::message(503, "the daemon is not running");
+    }
+
+    match answer.recv_timeout(REPLY_TIMEOUT) {
+        Ok(Reply::Places(places)) => match serde_json::to_string(&places) {
+            Ok(text) => Response::json(200, text),
+            Err(e) => Response::message(500, format!("cannot encode the places: {e}")),
+        },
+        Ok(Reply::Error(message)) => Response::message(400, message),
+        Err(_) => Response::message(504, "the lookup took too long"),
+        _ => Response::message(500, "unexpected answer"),
+    }
+}
+
+/// Token: 32 hex characters from the clock and the process ID.///
 /// The socket is loopback only and the token lives in a per-user file, so this
 /// is a guard against a wrong client, not a cryptographic secret.
 fn make_token() -> String {

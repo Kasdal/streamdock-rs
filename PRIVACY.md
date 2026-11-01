@@ -35,6 +35,25 @@ Network traffic happens only in these cases:
 3. A `plugin` action runs your plugin. The plugin decides what it does.
 4. If you run `streamdock update check`, it fetches one manifest file and its
    signature. It sends no identifier.
+5. A weather widget on the side strip asks Open-Meteo for the weather of the
+   place you picked. See below.
+
+## Weather widget
+
+A weather widget is the only automatic network use. It is off unless you add
+one to the side strip.
+
+| Question | Answer |
+| --- | --- |
+| Who gets the request | `api.open-meteo.com` and `geocoding-api.open-meteo.com` |
+| What is sent | the coordinates of the place, nothing else |
+| What comes back | the temperature and a weather code |
+| How often | every 15 minutes while a weather widget exists |
+| Account or key | none |
+| Is it stored | no, the answer stays in memory |
+
+The place lookup runs only when you press Look up in the editor. Remove the
+weather widget and the traffic stops.
 
 ## Update check
 

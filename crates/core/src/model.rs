@@ -45,6 +45,9 @@ pub const GRID_KEY_PIXELS: u16 = 96;
 /// Side of a strip key image in pixels.
 pub const STRIP_KEY_PIXELS: u16 = 80;
 
+/// Widgets that fit on the side strip.
+pub const STRIP_SLOTS: usize = 3;
+
 /// Width of the side strip display in pixels.
 ///
 /// Measured on the unit under test: the strip is one display, not three.

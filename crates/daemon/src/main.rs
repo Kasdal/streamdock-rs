@@ -22,6 +22,7 @@ mod panel;
 mod single;
 mod system;
 mod tray;
+mod weather;
 
 use std::io::Write;
 use std::process::ExitCode;
@@ -237,14 +238,16 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     let started = Instant::now();
 
-    // The side strip shows the machine load. The first sample only primes the
-    // CPU counters, so the loop takes one before it starts drawing.
-    let mut load = system::Load::new();
-    let mut drawn: Option<system::Reading> = None;
-    let mut next_sample = Instant::now();
-    if load.gpu_missing() {
+    // The side strip shows the widgets of the profile.
+    let mut viewer = system::Viewer::new();
+    if viewer.gpu_missing() {
         log("no GPU engine counters on this machine, the GPU meter shows --");
     }
+
+    // Weather answers arrive from their own thread, so a slow network never
+    // holds up a key press.
+    let (weather_out, weather_in) = mpsc::channel();
+    spawn_weather(Arc::clone(&shared), weather_out);
 
     loop {
         while let Ok(command) = incoming.try_recv() {
@@ -271,8 +274,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 &mut painter,
                 &shared,
                 verbose,
-                &load,
-                &mut drawn,
+                &mut viewer,
             );
         }
 
@@ -280,17 +282,12 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             busy = true;
         }
 
-        if Instant::now() >= next_sample {
-            next_sample = Instant::now() + Duration::from_millis(system::SAMPLE_MS);
-            let reading = load.sample();
-            let worth = match drawn {
-                None => true,
-                Some(previous) => system::changed(&previous, &reading),
-            };
-            if worth {
-                draw_strip(&panel, &profile, &reading);
-                drawn = Some(reading);
-            }
+        if viewer.tick(&panel, &profile, &shared) {
+            busy = true;
+        }
+
+        while let Ok((city, answer)) = weather_in.try_recv() {
+            viewer.set_weather(&city, answer);
             busy = true;
         }
 
@@ -341,8 +338,7 @@ fn handle_panel_event(
     painter: &mut Painter,
     shared: &Arc<ipc::Shared>,
     verbose: bool,
-    load: &system::Load,
-    drawn: &mut Option<system::Reading>,
+    viewer: &mut system::Viewer,
 ) {
     match event {
         PanelEvent::Connected => {
@@ -351,10 +347,7 @@ fn handle_panel_event(
             paint_page(panel, painter, profile, *page);
             // The panel keeps no image across a power loss, so the strip needs
             // a fresh copy even when no value moved.
-            if let Some(reading) = load.last() {
-                draw_strip(panel, profile, &reading);
-                *drawn = Some(reading);
-            }
+            viewer.force(panel, profile, shared);
         }
         PanelEvent::Disconnected(reason) => {
             log(format!("panel disconnected: {reason}"));
@@ -368,16 +361,55 @@ fn handle_panel_event(
 }
 
 /// Queue the side strip image for one reading.
-fn draw_strip(panel: &Panel, profile: &Profile, reading: &system::Reading) {
-    let palette = render::palette(&profile.theme).unwrap_or_default();
-    let size = (model::STRIP_WIDTH, model::STRIP_HEIGHT);
+/// Refresh the weather of every weather widget in the active profile.
+///
+/// The answers go back through a channel, so the coordinator never waits on
+/// the network.
+fn spawn_weather(shared: Arc<ipc::Shared>, out: mpsc::Sender<(String, system::Weather)>) {
+    /// Normal time between two answers for one place.
+    const REFRESH: Duration = Duration::from_secs(900);
+    /// Shorter wait after a failure, so a dropped link recovers.
+    const RETRY: Duration = Duration::from_secs(120);
 
-    match system::strip_jpeg(reading, size, palette.background, palette.foreground) {
-        Ok(jpeg) => {
-            panel.key(system::STRIP_KEY, jpeg.into());
+    thread::spawn(move || {
+        let mut next_try: std::collections::HashMap<String, Instant> =
+            std::collections::HashMap::new();
+
+        loop {
+            let profile = shared.snapshot().profile;
+            let now = Instant::now();
+
+            for slot in &profile.screen.slots {
+                let streamdock_store::profile::Slot::Weather {
+                    city,
+                    latitude,
+                    longitude,
+                    units,
+                } = slot
+                else {
+                    continue;
+                };
+
+                if next_try.get(city).is_some_and(|at| *at > now) {
+                    continue;
+                }
+
+                match weather::forecast(*latitude, *longitude, *units) {
+                    Ok(answer) => {
+                        log(format!("weather for {city}: {} {}", answer.value, answer.text));
+                        let _ = out.send((city.clone(), answer));
+                        next_try.insert(city.clone(), now + REFRESH);
+                    }
+                    Err(e) => {
+                        log(format!("weather for {city} failed: {e}"));
+                        next_try.insert(city.clone(), now + RETRY);
+                    }
+                }
+            }
+
+            thread::sleep(Duration::from_secs(20));
         }
-        Err(e) => log(format!("cannot draw the side strip: {e}")),
-    }
+    });
 }
 
 fn handle_key(
@@ -459,6 +491,27 @@ fn handle_command(
     auto: &mut apps::AutoSwitch,
 ) {
     match command {
+        ipc::Command::Geocode { query, reply } => {
+            // The lookup goes to its own thread: a slow network must not hold
+            // up the keys.
+            thread::spawn(move || {
+                let answer = match weather::geocode(&query) {
+                    Ok(places) => ipc::Reply::Places(
+                        places
+                            .into_iter()
+                            .map(|place| ipc::PlaceInfo {
+                                name: place.name,
+                                country: place.country,
+                                latitude: place.latitude,
+                                longitude: place.longitude,
+                            })
+                            .collect(),
+                    ),
+                    Err(e) => ipc::Reply::Error(e),
+                };
+                let _ = reply.send(answer);
+            });
+        }
         ipc::Command::Save {
             profile: next,
             expected_rev,

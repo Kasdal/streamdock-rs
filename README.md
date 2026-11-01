@@ -37,7 +37,8 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Preloaded tools profile | verified on hardware: media, pages, Notepad |
 | Desktop window | verified: one instance, native save dialog, window place |
 | Side strip meters | verified on hardware: CPU, GPU and memory load |
-| Unit tests | 189 tests, no device needed |
+| Side strip editor | verified: live pane, three widgets, weather lookup |
+| Unit tests | 207 tests, no device needed |
 ## Device facts (measured)
 
 Model: AJAZZ AKP-153E.
@@ -240,17 +241,31 @@ Key presses stay responsive while a key animates.
 
 Measured: a page switch repaints the page in about 20 ms.
 
-The side strip shows the machine load. Three bands carry CPU, GPU and memory,
-with a name, a percentage and a bar. The daemon samples once a second and
-writes a new image only when a value moves by one point.
+The side strip is one display with three widgets, one per third. The daemon
+draws them, samples once a second and writes a new image only when something
+changed.
 
-| Meter | Source | Notes |
+| Widget | Shows | Needs |
+| --- | --- | --- |
+| System meter | CPU, GPU, memory or disk, with a name, a percentage and a bar | nothing |
+| Clock | the time, the date, or both | nothing |
+| Weather | place, temperature and a short condition | a network request, see `PRIVACY.md` |
+| Empty | nothing | nothing |
+
+| Source | Call | Notes |
 | --- | --- | --- |
 | CPU | `GetSystemTimes`, delta between two samples | whole machine |
 | GPU | PDH `\GPU Engine(*)\Utilization Percentage` | busiest engine; `--` when the machine has no such counter |
 | Memory | `GlobalMemoryStatusEx` | used of total physical memory |
+| Disk | `GetDiskFreeSpaceExW` | used of the Windows drive |
+| Clock | `GetLocalTime` | local time |
+| Weather | Open-Meteo over WinHTTP | every 15 minutes, behind the widget |
 
 Every source is user mode. No administrator rights and no driver are needed.
+
+The editor shows the same picture the device gets. Click the strip in the
+device picture, pick a widget for each of the three slots, then press Apply
+strip.
 
 `streamdock preview --name Demo --out sheet.jpg` writes a picture of one page
 without the panel. Use it to check a profile on any machine.

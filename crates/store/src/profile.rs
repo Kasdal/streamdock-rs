@@ -54,6 +54,9 @@ pub struct Profile {
     /// Process names that switch to this profile, for example `obs64.exe`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub apps: Vec<String>,
+    /// Widgets of the side strip.
+    #[serde(default)]
+    pub screen: Screen,
     /// Pages in display order.
     #[serde(default)]
     pub pages: Vec<Page>,
@@ -107,6 +110,95 @@ impl DeviceSpec {
             None => self.pid.trim().parse().ok(),
         }
     }
+}
+
+/// The side strip: three widgets, one per third of the display.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Screen {
+    /// Widgets from the top. The list holds at most three.
+    #[serde(default = "default_slots")]
+    pub slots: Vec<Slot>,
+}
+
+impl Default for Screen {
+    fn default() -> Self {
+        Self {
+            slots: default_slots(),
+        }
+    }
+}
+
+fn default_slots() -> Vec<Slot> {
+    vec![
+        Slot::Meter {
+            metric: Metric::Cpu,
+        },
+        Slot::Meter {
+            metric: Metric::Gpu,
+        },
+        Slot::Meter {
+            metric: Metric::Memory,
+        },
+    ]
+}
+
+/// One widget of the side strip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Slot {
+    /// A load meter with a bar.
+    Meter {
+        #[serde(default)]
+        metric: Metric,
+    },
+    /// Time, date, or both.
+    Clock {
+        #[serde(default)]
+        style: ClockStyle,
+    },
+    /// The weather for one place.
+    Weather {
+        city: String,
+        #[serde(default)]
+        latitude: f64,
+        #[serde(default)]
+        longitude: f64,
+        #[serde(default)]
+        units: Units,
+    },
+    /// Nothing at all.
+    Empty,
+}
+
+/// What a meter shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Metric {
+    #[default]
+    Cpu,
+    Gpu,
+    Memory,
+    Disk,
+}
+
+/// What a clock shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClockStyle {
+    /// The time over the date.
+    #[default]
+    Both,
+    Time,
+    Date,
+}
+
+/// Units of the weather widget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Units {
+    #[default]
+    Metric,
+    Imperial,
 }
 
 /// One page of keys.
@@ -334,7 +426,9 @@ impl Profile {
             version: VERSION,
             name: name.to_string(),
             device: DeviceSpec::default(),
-            theme: Theme::default(),            apps: Vec::new(),
+            theme: Theme::default(),
+            apps: Vec::new(),
+            screen: Screen::default(),
             pages: vec![Page::new("Main")],
         }
     }
@@ -356,7 +450,9 @@ impl Profile {
             version: VERSION,
             name: "Default".to_string(),
             device: DeviceSpec::default(),
-            theme: Theme::default(),            apps: Vec::new(),
+            theme: Theme::default(),
+            apps: Vec::new(),
+            screen: Screen::default(),
             pages: vec![page],
         }
     }
@@ -546,6 +642,7 @@ impl Profile {
             device: DeviceSpec::default(),
             theme: Theme::default(),
             apps: Vec::new(),
+            screen: Screen::default(),
             pages: vec![media, system, apps, tools],
         }
     }
@@ -606,7 +703,9 @@ impl Profile {
             version: VERSION,
             name: "Demo".to_string(),
             device: DeviceSpec::default(),
-            theme: Theme::default(),            apps: Vec::new(),
+            theme: Theme::default(),
+            apps: Vec::new(),
+            screen: Screen::default(),
             pages: vec![main, second],
         }
     }
@@ -622,6 +721,17 @@ impl Profile {
 
         parse_color(&self.theme.background)?;
         parse_color(&self.theme.foreground)?;
+
+        if self.screen.slots.len() > model::STRIP_SLOTS {
+            return Err(format!(
+                "the side strip has {} widgets, the limit is {}",
+                self.screen.slots.len(),
+                model::STRIP_SLOTS
+            ));
+        }
+        for slot in &self.screen.slots {
+            slot.validate()?;
+        }
 
         for app in &self.apps {
             if app.trim().is_empty() {
@@ -665,8 +775,7 @@ impl Profile {
 }
 
 impl ImageSpec {
-    fn validate(&self) -> Result<(), String> {
-        match self {
+    fn validate(&self) -> Result<(), String> {        match self {
             ImageSpec::Color { color } => parse_color(color).map(|_| ()),
             ImageSpec::Text {
                 text,
@@ -733,6 +842,39 @@ fn truncate(text: &str, max: usize) -> String {
         return text.to_string();
     }
     text.chars().take(max).collect::<String>() + "..."
+}
+
+impl Slot {
+    /// Check one strip widget.
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            Slot::Weather {
+                city,
+                latitude,
+                longitude,
+                ..
+            } => {
+                let city = city.trim();
+                if city.is_empty() {
+                    return Err("a weather widget needs a place".into());
+                }
+                if city.chars().count() > 48 {
+                    return Err(format!("place name {city:?} is longer than 48 characters"));
+                }
+                if city.chars().any(|c| c.is_control()) {
+                    return Err("place name has a control character".into());
+                }
+                if !latitude.is_finite() || !(-90.0..=90.0).contains(latitude) {
+                    return Err(format!("latitude {latitude} is outside -90..=90"));
+                }
+                if !longitude.is_finite() || !(-180.0..=180.0).contains(longitude) {
+                    return Err(format!("longitude {longitude} is outside -180..=180"));
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 fn validate_action(action: &Action, depth: u32) -> Result<(), String> {
@@ -872,7 +1014,9 @@ mod tests {
             version: VERSION,
             name: "Default".into(),
             device: DeviceSpec::default(),
-            theme: Theme::default(),            apps: Vec::new(),
+            theme: Theme::default(),
+            apps: Vec::new(),
+            screen: Screen::default(),
             pages: vec![page, Page::new("Media")],
         }
     }
@@ -932,6 +1076,104 @@ mod tests {
         let mut profile = Profile::new("Test");
         profile.pages.push(Page::new("Main"));
         assert!(profile.validate().is_err());
+    }
+
+    #[test]
+    fn a_new_profile_has_the_three_meters() {
+        let profile = Profile::new("Test");
+        assert_eq!(profile.screen.slots.len(), model::STRIP_SLOTS);
+        assert_eq!(
+            profile.screen.slots[0],
+            Slot::Meter {
+                metric: Metric::Cpu
+            }
+        );
+        assert_eq!(
+            profile.screen.slots[1],
+            Slot::Meter {
+                metric: Metric::Gpu
+            }
+        );
+        assert_eq!(
+            profile.screen.slots[2],
+            Slot::Meter {
+                metric: Metric::Memory
+            }
+        );
+    }
+
+    #[test]
+    fn a_profile_without_a_screen_gets_the_meters() {
+        let json = r#"{
+            "name": "Old",
+            "pages": [ { "name": "Main", "keys": {} } ]
+        }"#;
+        let profile: Profile = serde_json::from_str(json).expect("an old profile loads");
+        assert_eq!(profile.screen, Screen::default());
+        assert!(profile.validate().is_ok());
+    }
+
+    #[test]
+    fn the_screen_round_trips_through_json() {
+        let mut profile = Profile::new("Test");
+        profile.screen.slots = vec![
+            Slot::Meter {
+                metric: Metric::Disk,
+            },
+            Slot::Clock {
+                style: ClockStyle::Time,
+            },
+            Slot::Weather {
+                city: "Berlin".into(),
+                latitude: 52.52,
+                longitude: 13.405,
+                units: Units::Imperial,
+            },
+        ];
+        let text = serde_json::to_string(&profile).expect("serialise");
+        let back: Profile = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back.screen, profile.screen);
+        assert!(back.validate().is_ok());
+
+        // The JSON names the widget with a tag, so a hand edit is readable.
+        assert!(text.contains("\"type\":\"weather\""));
+        assert!(text.contains("\"city\":\"Berlin\""));
+    }
+
+    #[test]
+    fn validate_rejects_a_fourth_widget() {
+        let mut profile = Profile::new("Test");
+        while profile.screen.slots.len() <= model::STRIP_SLOTS {
+            profile.screen.slots.push(Slot::Empty);
+        }
+        let err = profile.validate().expect_err("four widgets do not fit");
+        assert!(err.contains("side strip"));
+    }
+
+    #[test]
+    fn validate_rejects_a_weather_widget_without_a_place() {
+        let mut profile = Profile::new("Test");
+        profile.screen.slots[2] = Slot::Weather {
+            city: "   ".into(),
+            latitude: 0.0,
+            longitude: 0.0,
+            units: Units::Metric,
+        };
+        let err = profile.validate().expect_err("an empty place is invalid");
+        assert!(err.contains("place"));
+    }
+
+    #[test]
+    fn validate_rejects_a_weather_widget_off_the_map() {
+        let mut profile = Profile::new("Test");
+        profile.screen.slots[0] = Slot::Weather {
+            city: "Nowhere".into(),
+            latitude: 91.0,
+            longitude: 0.0,
+            units: Units::Metric,
+        };
+        let err = profile.validate().expect_err("latitude 91 is invalid");
+        assert!(err.contains("latitude"));
     }
 
     #[test]

@@ -87,6 +87,17 @@ impl Response {
         }
     }
 
+    /// An image with an explicit content type.
+    pub fn image(status: u16, content_type: &'static str, body: Vec<u8>) -> Self {
+        Self {
+            status,
+            content_type,
+            body,
+            download_name: None,
+            headers: Vec::new(),
+        }
+    }
+
     /// A binary download.
     pub fn download(content_type: &'static str, body: Vec<u8>, name: String) -> Self {
         Self {

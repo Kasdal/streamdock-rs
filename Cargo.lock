@@ -1053,6 +1053,7 @@ dependencies = [
 name = "streamdock-daemon"
 version = "0.2.0"
 dependencies = [
+ "serde_json",
  "streamdock-actions",
  "streamdock-core",
  "streamdock-ipc",

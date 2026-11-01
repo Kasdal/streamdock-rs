@@ -19,4 +19,5 @@ streamdock-store = { path = "../store" }
 streamdock-render = { path = "../render" }
 streamdock-actions = { path = "../actions" }
 streamdock-ipc = { path = "../ipc" }
+serde_json.workspace = true
 windows-sys.workspace = true

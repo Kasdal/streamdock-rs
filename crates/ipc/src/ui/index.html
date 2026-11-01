@@ -202,6 +202,17 @@
   .key.drop { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(63, 140, 255, .45); }
   .key img { width: 100%; height: 100%; display: block; object-fit: cover; }
   .key.strip img { object-fit: contain; }
+  /* The side strip is one tall display, 96 by 460 pixels. */
+  .key.screen {
+    grid-column: 6;
+    grid-row: 1 / span 3;
+    border-radius: 10px;
+    background: #101318;
+    border-color: #262c36;
+    padding: 4px;
+    box-sizing: border-box;
+  }
+  .key.screen img { object-fit: contain; height: 100%; }
   .key .num {
     position: absolute; top: 4px; left: 6px;
     font-size: 9px; font-weight: 600; color: rgba(255, 255, 255, .7);
@@ -356,7 +367,7 @@
   </section>
 
   <aside class="inspector">
-    <div class="card">
+    <div class="card" id="key-card">
       <h2>KEY <b id="editor-title">1</b></h2>
 
       <div class="field">
@@ -448,6 +459,16 @@
       <p id="message"></p>
     </div>
 
+    <div class="card hidden" id="strip-card">
+      <h2>SIDE STRIP</h2>
+      <p class="hint">Three widgets, one per third of the 96 by 460 display.</p>
+      <div id="strip-slots"></div>
+      <div class="actions">
+        <button id="strip-apply" class="icon-btn primary">Apply strip</button>
+      </div>
+      <p id="strip-message"></p>
+    </div>
+
     <div class="card">
       <h2>PROFILE</h2>
 
@@ -481,6 +502,7 @@ const tauri = window.__TAURI__ || null;
 
 let state = null;
 let selected = 1;
+let selectedScreen = false;
 let tileVersion = Date.now();
 let lastSignature = null;
 let editRev = 0;
@@ -544,12 +566,12 @@ function drawGrid() {
   const page = currentPage();
   if (!page) return;
 
-  for (let key = 1; key <= KEY_COUNT; key++) {
+  for (let key = 1; key <= GRID_KEYS; key++) {
     const config = page.keys[String(key)] || {};
     const cell = document.createElement("div");
-    cell.className = "key" + (key === selected ? " selected" : "") + (key > GRID_KEYS ? " strip" : "");
-    cell.style.gridColumn = key <= GRID_KEYS ? String(((key - 1) % 5) + 1) : "6";
-    cell.style.gridRow = key <= GRID_KEYS ? String(Math.floor((key - 1) / 5) + 1) : String(key - GRID_KEYS);
+    cell.className = "key" + (!selectedScreen && key === selected ? " selected" : "");
+    cell.style.gridColumn = String(((key - 1) % 5) + 1);
+    cell.style.gridRow = String(Math.floor((key - 1) / 5) + 1);
 
     const img = document.createElement("img");
     img.alt = "";
@@ -570,6 +592,7 @@ function drawGrid() {
     }
 
     cell.addEventListener("click", () => {
+      selectedScreen = false;
       selected = key;
       drawGrid();
       fillEditor();
@@ -588,6 +611,255 @@ function drawGrid() {
     });
 
     grid.appendChild(cell);
+  }
+
+  // One tall pane for the side strip, in the sixth column.
+  const screen = document.createElement("div");
+  screen.className = "key screen" + (selectedScreen ? " selected" : "");
+  const strip = document.createElement("img");
+  strip.alt = "";
+  strip.draggable = false;
+  strip.id = "strip-image";
+  strip.src = stripUrl();
+  screen.appendChild(strip);
+  screen.title = "Side strip: 96 by 460 pixels";
+  screen.addEventListener("click", () => {
+    selectedScreen = true;
+    drawGrid();
+    fillEditor();
+  });
+  grid.appendChild(screen);
+}
+
+function stripUrl() {
+  return apiBase + "/api/strip?token=" + encodeURIComponent(token) + "&v=" + Date.now();
+}
+
+/// Refresh the strip picture, so the pane follows the device.
+function refreshStrip() {
+  const image = $("strip-image");
+  if (image) image.src = stripUrl();
+}
+
+/* ---------------- side strip ---------------- */
+
+let stripDraft = null;
+
+function stripSlots() {
+  const screen = (state && state.profile.screen) || {};
+  const slots = Array.isArray(screen.slots) ? screen.slots.map((slot) => ({ ...slot })) : [];
+  while (slots.length < 3) slots.push({ type: "empty" });
+  return slots.slice(0, 3);
+}
+
+function drawStripEditor() {
+  const host = $("strip-slots");
+  if (!host) return;
+  stripDraft = stripSlots();
+  host.innerHTML = "";
+
+  stripDraft.forEach((slot, index) => {
+    const block = document.createElement("div");
+    block.className = "field";
+
+    const label = document.createElement("label");
+    label.textContent = "Slot " + (index + 1);
+    block.appendChild(label);
+
+    const type = document.createElement("select");
+    for (const [value, text] of [
+      ["meter", "System meter"],
+      ["clock", "Clock"],
+      ["weather", "Weather"],
+      ["empty", "Empty"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      if ((slot.type || "empty") === value) option.selected = true;
+      type.appendChild(option);
+    }
+    type.addEventListener("change", () => {
+      stripDraft[index] =
+        type.value === "meter" ? { type: "meter", metric: "cpu" }
+        : type.value === "clock" ? { type: "clock", style: "both" }
+        : type.value === "weather" ? { type: "weather", city: "", units: "metric" }
+        : { type: "empty" };
+      drawStripEditor();
+    });
+    block.appendChild(type);
+
+    const options = document.createElement("div");
+    block.appendChild(options);
+    host.appendChild(block);
+
+    paintSlotOptions(index, options);
+  });
+}
+
+function selectField(options, value, onChange) {
+  const select = document.createElement("select");
+  for (const [optionValue, text] of options) {
+    const option = document.createElement("option");
+    option.value = optionValue;
+    option.textContent = text;
+    if (optionValue === value) option.selected = true;
+    select.appendChild(option);
+  }
+  select.addEventListener("change", () => onChange(select.value));
+  return select;
+}
+
+function paintSlotOptions(index, host) {
+  host.innerHTML = "";
+  const slot = stripDraft[index] || { type: "empty" };
+
+  if (slot.type === "meter") {
+    host.appendChild(
+      selectField(
+        [["cpu", "CPU"], ["gpu", "GPU"], ["memory", "Memory"], ["disk", "Disk"]],
+        slot.metric || "cpu",
+        (value) => {
+          stripDraft[index] = { type: "meter", metric: value };
+        },
+      ),
+    );
+    return;
+  }
+
+  if (slot.type === "clock") {
+    host.appendChild(
+      selectField(
+        [["both", "Time and date"], ["time", "Time only"], ["date", "Date only"]],
+        slot.style || "both",
+        (value) => {
+          stripDraft[index] = { type: "clock", style: value };
+        },
+      ),
+    );
+    return;
+  }
+
+  if (slot.type === "weather") {
+    const city = document.createElement("input");
+    city.type = "text";
+    city.placeholder = "city, for example Berlin";
+    city.value = slot.city || "";
+    city.addEventListener("input", () => {
+      stripDraft[index] = { type: "weather", city: city.value, units: slot.units || "metric" };
+    });
+    host.appendChild(city);
+
+    const look = document.createElement("button");
+    look.className = "icon-btn";
+    look.textContent = "Look up";
+    look.addEventListener("click", () => lookUpPlace(index, city.value));
+    host.appendChild(look);
+
+    host.appendChild(
+      selectField(
+        [["metric", "Celsius"], ["imperial", "Fahrenheit"]],
+        slot.units || "metric",
+        (value) => {
+          stripDraft[index] = { ...stripDraft[index], units: value };
+        },
+      ),
+    );
+
+    const place = document.createElement("div");
+    place.id = "slot-places-" + index;
+    place.className = "hint";
+    if (slot.city && typeof slot.latitude === "number" && typeof slot.longitude === "number") {
+      place.textContent =
+        slot.city + " at " + slot.latitude.toFixed(2) + ", " + slot.longitude.toFixed(2);
+    } else {
+      place.textContent = "look up the place first";
+    }
+    host.appendChild(place);
+  }
+}
+
+async function lookUpPlace(index, query) {
+  const host = $("slot-places-" + index);
+  if (!host) return;
+  const text = (query || "").trim();
+  if (!text) {
+    host.textContent = "type a place name";
+    return;
+  }
+
+  host.textContent = "looking...";
+  try {
+    const places = await api("/api/geocode?q=" + encodeURIComponent(text));
+    if (!places.length) {
+      host.textContent = "no place found";
+      return;
+    }
+
+    const keep = stripDraft[index];
+    const choose = (place) => {
+      stripDraft[index] = {
+        type: "weather",
+        city: place.name,
+        latitude: place.latitude,
+        longitude: place.longitude,
+        units: keep && keep.units ? keep.units : "metric",
+      };
+    };
+    choose(places[0]);
+
+    host.innerHTML = "";
+    host.appendChild(
+      selectField(
+        places.map((place, at) => [
+          String(at),
+          place.name + (place.country ? ", " + place.country : ""),
+        ]),
+        "0",
+        (value) => {
+          choose(places[Number(value)]);
+          note.textContent =
+            stripDraft[index].city +
+            " at " +
+            stripDraft[index].latitude.toFixed(2) +
+            ", " +
+            stripDraft[index].longitude.toFixed(2);
+        },
+      ),
+    );
+    const note = document.createElement("div");
+    note.textContent =
+      stripDraft[index].city +
+      " at " +
+      stripDraft[index].latitude.toFixed(2) +
+      ", " +
+      stripDraft[index].longitude.toFixed(2);
+    host.appendChild(note);
+  } catch (e) {
+    host.textContent = e.message;
+  }
+}
+
+async function applyStrip() {
+  if (!state || !stripDraft) return;
+  for (let at = 0; at < stripDraft.length; at++) {
+    const slot = stripDraft[at];
+    if (slot.type === "weather" && (typeof slot.latitude !== "number" || !slot.city)) {
+      $("strip-message").textContent = "Slot " + (at + 1) + ": look up the place first.";
+      return;
+    }
+  }
+
+  const profile = JSON.parse(JSON.stringify(state.profile));
+  profile.screen = { slots: stripDraft };
+  try {
+    await saveProfile(profile, "strip saved", state.rev);
+    $("strip-message").textContent = "saved";
+    drawStripEditor();
+    refreshStrip();
+  } catch (e) {
+    $("strip-message").textContent = e.message;
+    reportError(e);
   }
 }
 
@@ -614,6 +886,16 @@ function drawTabs() {
 /* ---------------- editor ---------------- */
 
 function fillEditor() {
+  const keyCard = $("key-card");
+  const stripCard = $("strip-card");
+  if (keyCard) keyCard.classList.toggle("hidden", selectedScreen);
+  if (stripCard) stripCard.classList.toggle("hidden", !selectedScreen);
+
+  if (selectedScreen) {
+    drawStripEditor();
+    return;
+  }
+
   $("editor-title").textContent = String(selected);
   const config = keyConfig(selected) || {};
   const image = config.image || null;
@@ -1065,6 +1347,11 @@ async function importProfileFile(file) {
 
 $("f-kind").addEventListener("change", updateKindRows);
 $("apply").addEventListener("click", applyKey);
+$("strip-apply").addEventListener("click", applyStrip);
+// The strip pane follows the device, one picture a second.
+setInterval(() => {
+  if (!document.hidden) refreshStrip();
+}, 1000);
 $("clear").addEventListener("click", clearKey);
 $("undo").addEventListener("click", undo);
 $("page-add").addEventListener("click", addPage);

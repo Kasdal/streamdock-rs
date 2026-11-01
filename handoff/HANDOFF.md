@@ -1500,4 +1500,77 @@ Open work:
 4. The strip image is re-encoded on every change. At 96x460 the JPEG is about
    7 KB, so the 10 KB rule holds.
 
+## 39. Session 3 part 5: the strip in the editor, with three widgets
+
+Date: 2026-11-01. The side strip shows three widgets, and the editor shows and
+edits them.
+
+### What the profile holds
+
+```json
+"screen": {
+  "slots": [
+    { "type": "weather", "city": "Berlin", "latitude": 52.52, "longitude": 13.4, "units": "metric" },
+    { "type": "clock", "style": "both" },
+    { "type": "meter", "metric": "cpu" }
+  ]
+}
+```
+
+A profile without `screen` gets the three meters, so an old file still loads.
+The list holds at most three widgets, and the store checks them like the keys.
+
+### Widgets
+
+| Type | Band | Source |
+| --- | --- | --- |
+| `meter` | name, percentage, rounded bar | `GetSystemTimes`, PDH GPU, `GlobalMemoryStatusEx`, `GetDiskFreeSpaceExW` |
+| `clock` | time, date, or both | `GetLocalTime` |
+| `weather` | place, temperature, condition | Open-Meteo over WinHTTP |
+| `empty` | nothing | - |
+
+### The editor
+
+1. The device picture has one tall pane in the sixth column, at the real
+   aspect of 96 by 460.
+2. The pane shows the image the daemon drew, refreshed once a second through
+   `GET /api/strip`. The daemon keeps the upright copy in `Shared` for this,
+   while the panel gets the rotated copy.
+3. Click the pane and the right panel switches to SIDE STRIP: three slots,
+   each with a type and its options.
+4. A weather slot needs a place. Look up calls `GET /api/geocode?q=`, which
+   the daemon forwards to Open-Meteo on its own thread.
+5. Apply strip saves the profile, and the daemon redraws within a second.
+
+### Weather
+
+1. `crates/daemon/src/weather.rs` uses WinHTTP, which does TLS through
+   Windows. No TLS crate was added. The feature `Win32_Networking_WinHttp` was
+   already on.
+2. A thread checks the active profile every 20 seconds and fetches a place
+   that is due: every 15 minutes, or after 2 minutes when the last call failed.
+3. Answers come back through a channel, so a slow network never holds up a
+   key press.
+4. The log line for a refresh is `weather for Berlin: 9° Cloudy`.
+
+### Evidence
+
+| Test | Result |
+| --- | --- |
+| `/api/strip` | 200, `image/jpeg`, 96x460, about 7 KB |
+| `/api/geocode?q=Berlin` | 200, five places from Open-Meteo |
+| Weather band | `BERLIN 9° Cloudy`, real answer |
+| Clock band | `19:42` over `Sun 01 Nov` |
+| Editor pane | Shows the three widgets and follows the device |
+| Slot edit | Memory to CPU, Apply strip, the pane and the device change |
+| Console | No errors |
+
+Open work:
+
+1. A weather slot keeps only the latest answer in memory. A restart shows
+   `--` until the first fetch returns.
+2. The clock redraws within a second of a minute change, because the frame is
+   only drawn when a value moves.
+3. The editor cannot reorder a slot; it can only change its type.
+
 

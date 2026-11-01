@@ -1,6 +1,6 @@
-//! CPU, GPU and memory load for the side strip.
+//! The side strip: what it shows and where the numbers come from.
 //!
-//! The strip is one display, 80 by 380 pixels on the unit under test. It is
+//! The strip is one display, 96 by 460 pixels on the unit under test. It is
 //! addressed through key 16. The daemon samples once a second and writes a new
 //! image only when a value moved.
 //!
@@ -8,22 +8,32 @@
 //!
 //! 1. CPU from `GetSystemTimes`, the delta between two samples.
 //! 2. Memory from `GlobalMemoryStatusEx`.
-//! 3. GPU from the PDH counter `\GPU Engine(*)\Utilization Percentage`. Every
+//! 3. Disk from `GetDiskFreeSpaceExW` on the Windows drive.
+//! 4. GPU from the PDH counter `\GPU Engine(*)\Utilization Percentage`. Every
 //!    instance is one process on one engine, so the sum per engine and the
 //!    busiest engine give the overall load.
+//! 5. The clock from `GetLocalTime`.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use streamdock_core::image;
 use streamdock_core::model;
 use streamdock_core::proto;
-use streamdock_render::meter::{self, Meter};
+use streamdock_ipc as ipc;
+use streamdock_render as render;
+use streamdock_render::strip::{self, Band};
+use streamdock_store::profile::{ClockStyle, Metric, Profile, Slot};
 
+use crate::panel::Panel;
+
+use windows_sys::Win32::Foundation::SYSTEMTIME;
+use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use windows_sys::Win32::System::Performance::{
     PdhAddEnglishCounterW, PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW,
     PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA,
 };
-use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+use windows_sys::Win32::System::SystemInformation::{GetLocalTime, GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows_sys::Win32::System::Threading::GetSystemTimes;
 
 /// Key that addresses the side strip.
@@ -41,15 +51,48 @@ pub const CPU_COLOUR: [u8; 3] = [63, 140, 255];
 pub const GPU_COLOUR: [u8; 3] = [80, 214, 140];
 /// Colour of the memory meter.
 pub const MEMORY_COLOUR: [u8; 3] = [255, 190, 80];
+/// Colour of the disk meter.
+pub const DISK_COLOUR: [u8; 3] = [180, 140, 255];
+/// Colour of the clock.
+pub const CLOCK_COLOUR: [u8; 3] = [240, 240, 240];
+/// Colour of the weather widget.
+pub const WEATHER_COLOUR: [u8; 3] = [120, 200, 255];
 
-/// One set of readings, in percent.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Weekday names for the date line.
+const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/// Month names for the date line.
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// One set of load readings, in percent.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Reading {
     pub cpu: f32,
     pub gpu: Option<f32>,
     pub memory: f32,
+    pub disk: Option<f32>,
     pub used_bytes: u64,
     pub total_bytes: u64,
+}
+
+/// What a weather widget shows. Filled by the weather cache.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Weather {
+    /// Temperature in the unit the profile asked for, already rounded.
+    pub value: String,
+    /// Short condition, such as `Cloudy`.
+    pub text: String,
+}
+
+impl Weather {
+    /// The band a weather widget draws before the first answer arrives.
+    pub fn pending() -> Self {
+        Self {
+            value: "--".to_string(),
+            text: "waiting".to_string(),
+        }
+    }
 }
 
 /// The sampler. It keeps the counters between calls.
@@ -94,11 +137,13 @@ impl Load {
         };
 
         let gpu = self.gpu.as_ref().and_then(|gpu| gpu.percent());
+        let disk = disk_percent();
 
         let reading = Reading {
             cpu,
             gpu,
             memory,
+            disk,
             used_bytes,
             total_bytes,
         };
@@ -120,53 +165,285 @@ impl Load {
 /// True when a value moved enough to draw a new image.
 pub fn changed(before: &Reading, after: &Reading) -> bool {
     let moved = |a: f32, b: f32| (a - b).abs() >= REDRAW_PERCENT;
+    let option_moved = |a: Option<f32>, b: Option<f32>| match (a, b) {
+        (Some(a), Some(b)) => moved(a, b),
+        (None, None) => false,
+        _ => true,
+    };
+
     moved(before.cpu, after.cpu)
         || moved(before.memory, after.memory)
-        || match (before.gpu, after.gpu) {
-            (Some(a), Some(b)) => moved(a, b),
-            (None, None) => false,
-            _ => true,
-        }
+        || option_moved(before.gpu, after.gpu)
+        || option_moved(before.disk, after.disk)
 }
 
-/// Render and encode the strip image for one reading.
-pub fn strip_jpeg(
+/// One band, ready to draw.
+struct Tip {
+    label: String,
+    value: String,
+    subtitle: String,
+    percent: Option<f32>,
+    colour: [u8; 3],
+}
+
+/// Owns the strip: the sampler, the weather answers and what was drawn last.
+pub struct Viewer {
+    load: Load,
+    weather: HashMap<String, Weather>,
+    drawn: Option<Reading>,
+    shape: Option<(Vec<Slot>, [u8; 3], [u8; 3])>,
+    next: std::time::Instant,
+    weather_dirty: bool,
+}
+
+impl Default for Viewer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Viewer {
+    /// A viewer that samples at once, so the strip fills on start.
+    pub fn new() -> Self {
+        Self {
+            load: Load::new(),
+            weather: HashMap::new(),
+            drawn: None,
+            shape: None,
+            next: std::time::Instant::now(),
+            weather_dirty: false,
+        }
+    }
+
+    /// True when the machine has no GPU engine counters.
+    pub fn gpu_missing(&self) -> bool {
+        self.load.gpu_missing()
+    }
+
+    /// Store a weather answer for one place and ask for a redraw.
+    pub fn set_weather(&mut self, city: &str, weather: Weather) {
+        self.weather.insert(city.to_string(), weather);
+        self.weather_dirty = true;
+    }
+
+    /// Sample and redraw when due. True when the strip was written.
+    pub fn tick(&mut self, panel: &Panel, profile: &Profile, shared: &Arc<ipc::Shared>) -> bool {
+        if std::time::Instant::now() < self.next {
+            return false;
+        }
+        self.next = std::time::Instant::now() + std::time::Duration::from_millis(SAMPLE_MS);
+
+        let reading = self.load.sample();
+        let palette = render::palette(&profile.theme).unwrap_or_default();
+        let shape = (
+            profile.screen.slots.clone(),
+            palette.background,
+            palette.foreground,
+        );
+
+        let moved = match self.drawn {
+            None => true,
+            Some(previous) => changed(&previous, &reading),
+        };
+        if !moved && !self.weather_dirty && self.shape.as_ref() == Some(&shape) {
+            return false;
+        }
+
+        self.draw(panel, profile, &reading, &palette, shared);
+        self.drawn = Some(reading);
+        self.shape = Some(shape);
+        self.weather_dirty = false;
+        true
+    }
+
+    /// Draw at once, for a reconnect or a fresh profile.
+    pub fn force(&mut self, panel: &Panel, profile: &Profile, shared: &Arc<ipc::Shared>) {
+        let reading = match self.load.last() {
+            Some(reading) => reading,
+            None => self.load.sample(),
+        };
+        let palette = render::palette(&profile.theme).unwrap_or_default();
+        self.draw(panel, profile, &reading, &palette, shared);
+        self.drawn = Some(reading);
+        self.shape = Some((
+            profile.screen.slots.clone(),
+            palette.background,
+            palette.foreground,
+        ));
+        self.weather_dirty = false;
+    }
+
+    fn draw(
+        &self,
+        panel: &Panel,
+        profile: &Profile,
+        reading: &Reading,
+        palette: &render::Palette,
+        shared: &Arc<ipc::Shared>,
+    ) {
+        let size = (model::STRIP_WIDTH, model::STRIP_HEIGHT);
+        match strip_images(
+            profile,
+            reading,
+            &self.weather,
+            size,
+            palette.background,
+            palette.foreground,
+        ) {
+            Ok((device, preview)) => {
+                // The editor shows the same picture in its upright form.
+                shared.set_strip(preview.into());
+                panel.key(STRIP_KEY, device.into());
+            }
+            Err(e) => crate::log(format!("cannot draw the side strip: {e}")),
+        }
+    }
+}
+
+/// Render the strip twice: the bytes for the panel, and the upright copy for
+/// the editor.
+///
+/// The panel shows every image rotated, so it gets the rotated copy. The
+/// editor shows the upright copy.
+pub fn strip_images(
+    profile: &Profile,
     reading: &Reading,
+    weather: &HashMap<String, Weather>,
     size: (u16, u16),
     background: [u8; 3],
     foreground: [u8; 3],
-) -> Result<Vec<u8>, String> {
-    let cpu = format!("{:.0}%", reading.cpu);
-    let gpu = match reading.gpu {
-        Some(value) => format!("{value:.0}%"),
-        None => "--".to_string(),
-    };
-    let memory = format!("{:.0}%", reading.memory);
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let tips = describe_slots(profile, reading, weather);
 
-    let meters = [
-        Meter {
-            label: "CPU",
-            value: &cpu,
-            percent: Some(reading.cpu),
-            colour: CPU_COLOUR,
-        },
-        Meter {
-            label: "GPU",
-            value: &gpu,
-            percent: reading.gpu,
-            colour: GPU_COLOUR,
-        },
-        Meter {
-            label: "MEM",
-            value: &memory,
-            percent: Some(reading.memory),
-            colour: MEMORY_COLOUR,
-        },
-    ];
+    let bands: Vec<Band> = tips
+        .iter()
+        .map(|tip| Band {
+            label: &tip.label,
+            value: &tip.value,
+            subtitle: if tip.subtitle.is_empty() {
+                None
+            } else {
+                Some(&tip.subtitle)
+            },
+            percent: tip.percent,
+            colour: tip.colour,
+        })
+        .collect();
 
-    let upright = meter::strip(size, &meters, background, foreground);
+    let upright = strip::strip(size, &bands, background, foreground);
     let rotated = image::rotate(&upright, model::ROTATION);
-    image::encode_max(&rotated, proto::MAX_IMAGE_BYTES)
+
+    let device = image::encode_max(&rotated, proto::MAX_IMAGE_BYTES)?;
+    let preview = image::encode_max(&upright, proto::MAX_IMAGE_BYTES)?;
+    Ok((device, preview))
+}
+
+/// Build the three bands from the profile.
+fn describe_slots(
+    profile: &Profile,
+    reading: &Reading,
+    weather: &HashMap<String, Weather>,
+) -> Vec<Tip> {
+    let now = local_time();
+    let mut tips = Vec::with_capacity(model::STRIP_SLOTS);
+
+    for index in 0..model::STRIP_SLOTS {
+        let slot = profile.screen.slots.get(index);
+        tips.push(match slot {
+            Some(Slot::Meter { metric }) => meter_tip(*metric, reading),
+            Some(Slot::Clock { style }) => clock_tip(*style, &now),
+            Some(Slot::Weather {
+                city, units, ..
+            }) => weather_tip(city, *units, weather),
+            Some(Slot::Empty) | None => Tip {
+                label: String::new(),
+                value: String::new(),
+                subtitle: String::new(),
+                percent: None,
+                colour: CLOCK_COLOUR,
+            },
+        });
+    }
+
+    tips
+}
+
+fn meter_tip(metric: Metric, reading: &Reading) -> Tip {
+    let (label, value, colour) = match metric {
+        Metric::Cpu => ("CPU", Some(reading.cpu), CPU_COLOUR),
+        Metric::Gpu => ("GPU", reading.gpu, GPU_COLOUR),
+        Metric::Memory => ("MEM", Some(reading.memory), MEMORY_COLOUR),
+        Metric::Disk => ("DISK", reading.disk, DISK_COLOUR),
+    };
+
+    Tip {
+        label: label.to_string(),
+        value: match value {
+            Some(percent) => format!("{percent:.0}%"),
+            None => "--".to_string(),
+        },
+        subtitle: String::new(),
+        percent: value,
+        colour,
+    }
+}
+
+fn clock_tip(style: ClockStyle, now: &(String, String)) -> Tip {
+    let (time, date) = now;
+    match style {
+        ClockStyle::Time => Tip {
+            label: String::new(),
+            value: time.clone(),
+            subtitle: String::new(),
+            percent: None,
+            colour: CLOCK_COLOUR,
+        },
+        ClockStyle::Date => Tip {
+            label: String::new(),
+            value: date.clone(),
+            subtitle: String::new(),
+            percent: None,
+            colour: CLOCK_COLOUR,
+        },
+        ClockStyle::Both => Tip {
+            label: String::new(),
+            value: time.clone(),
+            subtitle: date.clone(),
+            percent: None,
+            colour: CLOCK_COLOUR,
+        },
+    }
+}
+
+fn weather_tip(city: &str, units: streamdock_store::profile::Units, cache: &HashMap<String, Weather>) -> Tip {
+    let entry = cache.get(city).cloned().unwrap_or_else(Weather::pending);
+    let name: String = city.chars().take(12).collect::<String>().to_uppercase();
+    let _ = units;
+    Tip {
+        label: name,
+        value: entry.value,
+        subtitle: entry.text,
+        percent: None,
+        colour: WEATHER_COLOUR,
+    }
+}
+
+/// Local time and date, such as `14:05` and `Sat 01 Nov`.
+fn local_time() -> (String, String) {
+    let mut now: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    unsafe {
+        GetLocalTime(&mut now);
+    }
+
+    let time = format!("{:02}:{:02}", now.wHour, now.wMinute);
+    let weekday = WEEKDAYS
+        .get(now.wDayOfWeek as usize % WEEKDAYS.len())
+        .unwrap_or(&"---");
+    let month = MONTHS
+        .get((now.wMonth.saturating_sub(1)) as usize % MONTHS.len())
+        .unwrap_or(&"---");
+    let date = format!("{weekday} {:02} {month}", now.wDay);
+    (time, date)
 }
 
 /// Idle, kernel and user time of the whole machine, in 100 ns units.
@@ -208,6 +485,28 @@ fn memory() -> (u64, u64) {
     (status.ullTotalPhys, status.ullAvailPhys)
 }
 
+/// Used share of the drive that holds Windows.
+fn disk_percent() -> Option<f32> {
+    let root = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+    let path = wide(&format!("{root}\\"));
+    let mut free_to_caller: u64 = 0;
+    let mut total: u64 = 0;
+    let mut free: u64 = 0;
+
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            path.as_ptr(),
+            &mut free_to_caller as *mut u64 as *mut _,
+            &mut total as *mut u64 as *mut _,
+            &mut free as *mut u64 as *mut _,
+        )
+    };
+    if ok == 0 || total == 0 {
+        return None;
+    }
+    Some((total - free) as f32 * 100.0 / total as f32)
+}
+
 /// The open PDH query for the GPU engines.
 struct Gpu {
     query: PDH_HQUERY,
@@ -243,7 +542,9 @@ impl Gpu {
         engines
             .values()
             .cloned()
-            .fold(None, |best: Option<f32>, value| Some(best.map_or(value, |b| b.max(value))))
+            .fold(None, |best: Option<f32>, value| {
+                Some(best.map_or(value, |b| b.max(value)))
+            })
     }
 
     /// One value per counter instance.
@@ -336,6 +637,28 @@ fn wide(text: &str) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use streamdock_store::profile::{Screen, Units};
+
+    fn profile_with(slots: Vec<Slot>) -> Profile {
+        let mut profile = Profile::new("Test");
+        profile.screen = Screen { slots };
+        profile
+    }
+
+    fn reading() -> Reading {
+        Reading {
+            cpu: 12.0,
+            gpu: Some(34.0),
+            memory: 56.0,
+            disk: Some(70.0),
+            used_bytes: 8_000_000_000,
+            total_bytes: 16_000_000_000,
+        }
+    }
+
+    fn tips(profile: &Profile) -> Vec<Tip> {
+        describe_slots(profile, &reading(), &HashMap::new())
+    }
 
     #[test]
     fn cpu_time_uses_the_idle_part() {
@@ -393,25 +716,22 @@ mod tests {
 
     #[test]
     fn a_moved_value_asks_for_a_redraw() {
-        let before = Reading {
-            cpu: 10.0,
-            gpu: Some(20.0),
-            memory: 40.0,
-            used_bytes: 0,
-            total_bytes: 0,
-        };
+        let before = reading();
         let same = Reading {
-            cpu: 10.4,
-            gpu: Some(20.4),
-            memory: 40.4,
-            used_bytes: 0,
-            total_bytes: 0,
+            cpu: 12.4,
+            gpu: Some(34.4),
+            memory: 56.4,
+            disk: Some(70.4),
+            ..before
         };
         let moved = Reading {
-            cpu: 11.2,
+            cpu: 13.2,
             ..same
         };
-        let lost = Reading { gpu: None, ..same };
+        let lost = Reading {
+            gpu: None,
+            ..same
+        };
 
         assert!(!changed(&before, &same));
         assert!(changed(&before, &moved));
@@ -420,18 +740,103 @@ mod tests {
     }
 
     #[test]
+    fn the_default_profile_shows_the_three_meters() {
+        let profile = Profile::new("Test");
+        let tips = tips(&profile);
+        assert_eq!(tips.len(), model::STRIP_SLOTS);
+        assert_eq!(tips[0].label, "CPU");
+        assert_eq!(tips[0].value, "12%");
+        assert_eq!(tips[1].label, "GPU");
+        assert_eq!(tips[1].value, "34%");
+        assert_eq!(tips[2].label, "MEM");
+        assert_eq!(tips[2].value, "56%");
+        assert!(tips[0].percent.is_some());
+    }
+
+    #[test]
+    fn a_clock_band_has_no_bar() {
+        let profile = profile_with(vec![
+            Slot::Clock {
+                style: ClockStyle::Both,
+            },
+            Slot::Empty,
+            Slot::Empty,
+        ]);
+        let tips = tips(&profile);
+        assert!(tips[0].percent.is_none());
+        assert!(tips[0].value.contains(':'), "time like 14:05");
+        assert!(!tips[0].subtitle.is_empty(), "a date under the time");
+        assert_eq!(tips[1].value, "");
+    }
+
+    #[test]
+    fn a_weather_band_waits_for_the_first_answer() {
+        let profile = profile_with(vec![
+            Slot::Weather {
+                city: "Berlin".into(),
+                latitude: 52.52,
+                longitude: 13.405,
+                units: Units::Metric,
+            },
+            Slot::Empty,
+            Slot::Empty,
+        ]);
+        let tips = tips(&profile);
+        assert_eq!(tips[0].label, "BERLIN");
+        assert_eq!(tips[0].value, "--");
+        assert!(tips[0].percent.is_none());
+    }
+
+    #[test]
+    fn a_filled_weather_band_shows_the_temperature() {
+        let profile = profile_with(vec![
+            Slot::Weather {
+                city: "Berlin".into(),
+                latitude: 52.52,
+                longitude: 13.405,
+                units: Units::Metric,
+            },
+            Slot::Empty,
+            Slot::Empty,
+        ]);
+        let mut cache = HashMap::new();
+        cache.insert(
+            "Berlin".to_string(),
+            Weather {
+                value: "18°".into(),
+                text: "Cloudy".into(),
+            },
+        );
+        let tips = describe_slots(&profile, &reading(), &cache);
+        assert_eq!(tips[0].value, "18°");
+        assert_eq!(tips[0].subtitle, "Cloudy");
+    }
+
+    #[test]
     fn the_strip_is_one_image_for_key_16() {
-        let reading = Reading {
-            cpu: 12.0,
-            gpu: Some(34.0),
-            memory: 56.0,
-            used_bytes: 8_000_000_000,
-            total_bytes: 16_000_000_000,
-        };
-        let jpeg = strip_jpeg(&reading, (96, 460), [20, 20, 24], [240, 240, 240]).unwrap();
-        assert!(jpeg.len() > 500);
-        assert!(jpeg.len() <= proto::MAX_IMAGE_BYTES);
-        assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
+        let profile = Profile::new("Test");
+        let (device, preview) = strip_images(
+            &profile,
+            &reading(),
+            &HashMap::new(),
+            (96, 460),
+            [20, 20, 24],
+            [240, 240, 240],
+        )
+        .unwrap();
+
+        assert!(device.len() > 500);
+        assert!(device.len() <= proto::MAX_IMAGE_BYTES);
+        assert_eq!(&device[..2], &[0xFF, 0xD8]);
+
+        // The preview is the upright picture: 96 wide and 460 tall.
+        let upright = image::decode(&preview).expect("the preview is a JPEG");
+        assert_eq!((upright.width, upright.height), (96, 460));
+
+        // The panel copy is rotated for the device: 460 wide and 96 tall.
+        let rotated = image::decode(&device).expect("the device copy is a JPEG");
+        assert_eq!((rotated.width, rotated.height), (460, 96));
+
         assert_eq!(STRIP_KEY, 16);
     }
 }
