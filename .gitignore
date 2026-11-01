@@ -4,3 +4,5 @@
 !test-key1.jpg
 *.png
 *.gif
+dist/
+*.zip

@@ -27,7 +27,9 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Bundled font and icons | verified on hardware: Roboto labels, built-in icon set |
 | Themes | verified on hardware: purple and yellow profile theme |
 | Profile export and import | verified: zip with the profile, assets and icons |
-| Unit tests | 152 tests, no device needed |
+| Editor export and import | verified over HTTP: download and upload |
+| Release package | verified: install and uninstall into a temp folder |
+| Unit tests | 155 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -155,6 +157,10 @@ The daemon prints the editor URL at start. `streamdock ui` opens it in the
 default browser. The port is random, and the token is in
 `%LOCALAPPDATA%\StreamDock\runtime.json`.
 
+A release build has no console window. It writes to
+`%LOCALAPPDATA%\StreamDock\logs\daemon.log`, and rotates that file at 1 MB.
+A debug build also prints to the console.
+
 The editor is one HTML page with a key grid and a key editor. Apply a key and
 the panel changes within a second. The page needs no build step and no extra
 runtime.
@@ -167,6 +173,10 @@ so the profile stays portable.
 The header holds the two theme colours and the brightness slider. For an icon
 key, type a name, choose an SVG file and the editor stores it in `icons/`.
 The name field suggests the bundled icon names.
+
+The Export button downloads the active profile as one zip. The Import button
+replaces the active profile from a zip. Both use the same format as
+`streamdock profile export` and `streamdock profile import`.
 
 The Undo button restores the profile from before the last save. Ctrl+Z does
 the same when the focus is not in a text field.
@@ -276,6 +286,26 @@ is the fallback when no font can be loaded.
 Action types: `hotkey`, `text`, `media`, `launch`, `multi`, `page`,
 `brightness`, `command`. A `command` action runs a program, so a profile with
 one needs an explicit opt in before a release build accepts it.
+
+## Install
+
+`build-release.ps1` builds both binaries, embeds the app icon and writes a
+portable package plus a zip under `dist\`.
+
+```powershell
+.\build-release.ps1
+.\dist\StreamDock-0.2.0\install.ps1
+```
+
+`install.ps1` copies the program to `%LOCALAPPDATA%\StreamDock\bin`, adds the
+per-user autostart value and creates a Start menu shortcut. Use `-NoAutostart`
+or `-NoShortcut` to skip either step, and `-Target PATH` for another folder.
+`uninstall.ps1` removes the program. It keeps profiles when you pass
+`-KeepProfiles`.
+
+`sign.ps1` signs both binaries with `signtool`. Set `STREAMDOCK_CERT` to a
+`.pfx` file and `STREAMDOCK_CERT_PASSWORD` to its password. Signing needs the
+Windows SDK signing tools and a code signing certificate.
 
 ## Build
 

@@ -127,6 +127,9 @@
     <input id="brightness" type="range" min="0" max="100" value="60" style="width:120px">
     <span id="brightness-value">60</span>
   </span>
+  <button id="export">Export</button>
+  <button id="import">Import</button>
+  <input id="import-file" type="file" accept=".zip,application/zip" class="hidden">
   <button id="undo" disabled>Undo</button>
   <button id="reload">Reload profile</button>
 </header>
@@ -644,6 +647,38 @@ async function deletePage() {
   } catch (e) { reportError(e); }
 }
 
+/// Download the active profile as a zip.
+function exportProfile() {
+  window.location.href = "/api/export?token=" + encodeURIComponent(TOKEN);
+}
+
+/// Replace the active profile from a zip file.
+async function importProfileFile(file) {
+  if (!file) return;
+  if (!confirm("Import " + file.name + "? A profile with the same name is replaced.")) {
+    return;
+  }
+  try {
+    message("importing " + file.name + "...");
+    const bytes = await file.arrayBuffer();
+    const next = await api("/api/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/zip" },
+      body: bytes,
+    });
+    state = next;
+    lastSignature = null;
+    tileVersion = Date.now();
+    drawTabs();
+    drawGrid();
+    fillEditor();
+    showTheme();
+    message("imported " + state.profile.name, "ok");
+  } catch (e) {
+    message(e.message, "bad");
+  }
+}
+
 async function reloadProfile() {
   try {
     state = await api("/api/reload", { method: "POST", body: "{}" });
@@ -703,6 +738,13 @@ $("page-add").addEventListener("click", addPage);
 $("page-rename").addEventListener("click", renamePage);
 $("page-delete").addEventListener("click", deletePage);
 $("reload").addEventListener("click", reloadProfile);
+$("export").addEventListener("click", exportProfile);
+$("import").addEventListener("click", () => $("import-file").click());
+$("import-file").addEventListener("change", (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (file) importProfileFile(file);
+  event.target.value = "";
+});
 $("brightness").addEventListener("change", (event) => setBrightness(event.target.value));
 $("theme-bg").addEventListener("change", applyTheme);
 $("theme-fg").addEventListener("change", applyTheme);

@@ -10,8 +10,8 @@ use std::net::TcpStream;
 /// Largest accepted header block.
 pub const MAX_HEADER_BYTES: usize = 64 * 1024;
 
-/// Largest accepted body.
-pub const MAX_BODY_BYTES: usize = 1024 * 1024;
+/// Largest accepted body. A profile zip can hold pictures.
+pub const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 /// One parsed request.
 #[derive(Debug)]
@@ -52,6 +52,8 @@ pub struct Response {
     pub status: u16,
     pub content_type: &'static str,
     pub body: Vec<u8>,
+    /// When set, the browser saves the body under this name.
+    pub download_name: Option<String>,
 }
 
 impl Response {
@@ -61,6 +63,7 @@ impl Response {
             status,
             content_type: "application/json; charset=utf-8",
             body: body.into_bytes(),
+            download_name: None,
         }
     }
 
@@ -76,6 +79,17 @@ impl Response {
             status: 200,
             content_type: "text/html; charset=utf-8",
             body: body.as_bytes().to_vec(),
+            download_name: None,
+        }
+    }
+
+    /// A binary download.
+    pub fn download(content_type: &'static str, body: Vec<u8>, name: String) -> Self {
+        Self {
+            status: 200,
+            content_type,
+            body,
+            download_name: Some(name),
         }
     }
 }
@@ -165,13 +179,26 @@ pub fn write_response(stream: &mut TcpStream, response: &Response) -> std::io::R
         _ => "OK",
     };
 
-    let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+    let mut head = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\n",
         response.status,
         reason,
         response.content_type,
         response.body.len()
     );
+
+    if let Some(name) = &response.download_name {
+        // Only a plain name is used, so no header injection is possible.
+        let safe: String = name
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+            .collect();
+        head.push_str(&format!(
+            "Content-Disposition: attachment; filename=\"{safe}\"\r\n"
+        ));
+    }
+
+    head.push_str("Connection: close\r\n\r\n");
 
     stream.write_all(head.as_bytes())?;
     stream.write_all(&response.body)?;

@@ -16,7 +16,7 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GetCursorPos, GetMessageW, GetWindowLongPtrW, LoadCursorW, LoadIconW,
+    DispatchMessageW, GetCursorPos, GetMessageW, GetWindowLongPtrW, HICON, LoadCursorW, LoadIconW,
     PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW,
     TrackPopupMenu, TranslateMessage, GWLP_USERDATA, IDC_ARROW, IDI_APPLICATION, MF_SEPARATOR,
     MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE,
@@ -86,6 +86,17 @@ fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// The icon from the executable resource, or the system icon.
+fn app_icon(instance: windows_sys::Win32::Foundation::HINSTANCE) -> HICON {
+    // Resource id 1 is the icon that `build.rs` embeds.
+    let icon = unsafe { LoadIconW(instance, 1 as *const u16) };
+    if icon.is_null() {
+        unsafe { LoadIconW(std::ptr::null_mut(), IDI_APPLICATION) }
+    } else {
+        icon
+    }
+}
+
 fn run(url: String, commands: Sender<Command>, on_quit: fn(), window: Arc<Mutex<isize>>) {
     // SAFETY: every pointer below comes from Win32 and lives until the loop
     // ends. The context box is released after the message loop.
@@ -93,6 +104,7 @@ fn run(url: String, commands: Sender<Command>, on_quit: fn(), window: Arc<Mutex<
         let instance = GetModuleHandleW(std::ptr::null());
         let class_name = wide("StreamDockTrayWindow");
         let title = wide("Stream Dock");
+        let icon_handle = app_icon(instance);
 
         let class = WNDCLASSW {
             style: 0,
@@ -100,7 +112,7 @@ fn run(url: String, commands: Sender<Command>, on_quit: fn(), window: Arc<Mutex<
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: instance,
-            hIcon: LoadIconW(std::ptr::null_mut(), IDI_APPLICATION),
+            hIcon: icon_handle,
             hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
             hbrBackground: std::ptr::null_mut(),
             lpszMenuName: std::ptr::null(),
@@ -145,7 +157,7 @@ fn run(url: String, commands: Sender<Command>, on_quit: fn(), window: Arc<Mutex<
         icon.uID = 1;
         icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         icon.uCallbackMessage = WM_TRAY;
-        icon.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
+        icon.hIcon = icon_handle;
         let tip = wide("Stream Dock");
         let count = tip.len().min(icon.szTip.len());
         icon.szTip[..count].copy_from_slice(&tip[..count]);

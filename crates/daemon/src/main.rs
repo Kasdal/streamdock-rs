@@ -10,15 +10,21 @@
 //! Usage:
 //!   streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank]
 //!               [--verbose] [--no-ui] [--no-tray]
+//!
+//! A release build has no console. The log goes to
+//! `%LOCALAPPDATA%\StreamDock\logs\daemon.log`.
+
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod painter;
 mod panel;
 mod single;
 mod tray;
 
+use std::io::Write;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -36,11 +42,59 @@ use single::SingleInstance;
 
 static START: OnceLock<Instant> = OnceLock::new();
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static LOG_FILE: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
 
-/// Print one line with the seconds since start.
+/// Write one line to the log file, and to the console when there is one.
 fn log(message: impl AsRef<str>) {
     let start = START.get_or_init(Instant::now);
-    println!("[{:>9.3}] {}", start.elapsed().as_secs_f64(), message.as_ref());
+    let line = format!("[{:>9.3}] {}", start.elapsed().as_secs_f64(), message.as_ref());
+
+    if let Some(file) = LOG_FILE.get_or_init(open_log).as_ref() {
+        if let Ok(mut file) = file.lock() {
+            let _ = writeln!(file, "{line}");
+        }
+    }
+    if console_attached() {
+        println!("{line}");
+    }
+}
+
+/// Write plain text to the console, when there is one.
+fn say(text: impl AsRef<str>) {
+    if console_attached() {
+        println!("{}", text.as_ref());
+    }
+}
+
+fn log_dir() -> std::path::PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    base.join("StreamDock").join("logs")
+}
+
+/// Open the log file and rotate it when it grows past 1 MB.
+fn open_log() -> Option<Mutex<std::fs::File>> {
+    let dir = log_dir();
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("daemon.log");
+
+    if let Ok(metadata) = std::fs::metadata(&path) {
+        if metadata.len() > 1_000_000 {
+            let _ = std::fs::rename(&path, dir.join("daemon.old.log"));
+        }
+    }
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .ok()?;
+    Some(Mutex::new(file))
+}
+
+fn console_attached() -> bool {
+    unsafe { !windows_sys::Win32::System::Console::GetConsoleWindow().is_null() }
 }
 
 /// Ask the loop to stop. The tray menu and Ctrl+C both use this.
@@ -72,15 +126,15 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!("streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank] [--verbose] [--no-ui] [--no-tray]");
-        println!();
-        println!("  --profile NAME  profile to load, default Default");
-        println!("  --dir PATH      profile folder, default %LOCALAPPDATA%\\StreamDock\\profiles");
-        println!("  --seconds N     stop after N seconds, default run until Ctrl+C");
-        println!("  --no-blank      keep the keys on exit instead of clearing them");
-        println!("  --verbose       log every input report");
-        println!("  --no-ui         do not start the editor server");
-        println!("  --no-tray       do not show the tray icon");
+        say("streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank] [--verbose] [--no-ui] [--no-tray]");
+        say("");
+        say("  --profile NAME  profile to load, default Default");
+        say("  --dir PATH      profile folder, default %LOCALAPPDATA%\\StreamDock\\profiles");
+        say("  --seconds N     stop after N seconds, default run until Ctrl+C");
+        say("  --no-blank      keep the keys on exit instead of clearing them");
+        say("  --verbose       log every input report");
+        say("  --no-ui         do not start the editor server");
+        say("  --no-tray       do not show the tray icon");
         return ExitCode::SUCCESS;
     }
 
@@ -385,6 +439,29 @@ fn handle_command(
                 shared.update(|state| {
                     state.set_profile(profile.clone());
                     state.set_page(*page);
+                });
+                let _ = reply.send(ipc::Reply::Ok(shared.snapshot()));
+            }
+            Err(e) => {
+                let _ = reply.send(ipc::Reply::Error(e.to_string()));
+            }
+        },
+        ipc::Command::Import {
+            bytes,
+            new_name,
+            reply,
+        } => match store.import_bytes(&bytes, new_name.as_deref()) {
+            Ok(imported) => {
+                *profile = imported;
+                *page = 0;
+                log(format!(
+                    "profile {} imported, page {}",
+                    profile.name, profile.pages[0].name
+                ));
+                paint_page(panel, painter, profile, *page);
+                shared.update(|state| {
+                    state.set_profile(profile.clone());
+                    state.set_page(0);
                 });
                 let _ = reply.send(ipc::Reply::Ok(shared.snapshot()));
             }

@@ -150,6 +150,12 @@ pub enum Command {
     Brightness { value: u8, reply: ReplySender },
     /// Read the profile from disk again.
     Reload { reply: ReplySender },
+    /// Replace the active profile from a zip archive.
+    Import {
+        bytes: Vec<u8>,
+        new_name: Option<String>,
+        reply: ReplySender,
+    },
 }
 
 /// A running server.
@@ -369,8 +375,54 @@ fn route(context: &Context, request: &Request) -> Response {
             }
             save_icon(context, request)
         }
+        ("GET", "/api/export") => {
+            // A download link cannot set a header, so the token is in the query.
+            if request.query_value("token") != Some(context.token.as_str()) {
+                return Response::message(401, "missing or wrong token");
+            }
+            export_profile(context, request)
+        }
+        ("POST", "/api/import") => {
+            if !api_token_ok(context, request) {
+                return Response::message(401, "missing or wrong token");
+            }
+            import_profile(context, request)
+        }
         _ => Response::message(404, "no such path"),
     }
+}
+
+/// Send the active profile, or the named one, as a zip download.
+fn export_profile(context: &Context, request: &Request) -> Response {
+    let state = context.shared.snapshot();
+    let name = request
+        .query_value("name")
+        .filter(|name| !name.is_empty())
+        .map(|name| name.to_string())
+        .unwrap_or(state.profile.name);
+
+    let store = streamdock_store::Store::new(&context.base);
+    match store.export_bytes(&name) {
+        Ok((bytes, _)) => Response::download("application/zip", bytes, format!("{name}.zip")),
+        Err(e) => Response::message(400, e.to_string()),
+    }
+}
+
+/// Replace the active profile from a zip body.
+fn import_profile(context: &Context, request: &Request) -> Response {
+    if request.body.is_empty() {
+        return Response::message(400, "the import body is empty");
+    }
+    let new_name = request
+        .query_value("name")
+        .filter(|name| !name.is_empty())
+        .map(|name| name.to_string());
+    let bytes = request.body.clone();
+    roundtrip(context, |reply| Command::Import {
+        bytes,
+        new_name,
+        reply,
+    })
 }
 
 /// Bundled icons plus the files in the profile `icons` folder.
@@ -489,6 +541,7 @@ fn tile_image(context: &Context, request: &Request) -> Response {
             status: 200,
             content_type: "image/jpeg",
             body: jpeg,
+            download_name: None,
         },
         Err(message) => Response::message(500, message),
     }
@@ -939,5 +992,60 @@ mod tests {
         assert_eq!(sanitize_icon_name(""), None);
         assert_eq!(sanitize_icon_name("a/b"), None);
         assert_eq!(sanitize_icon_name(&"x".repeat(40)), None);
+    }
+
+    #[test]
+    fn the_export_returns_a_zip_download() {
+        let dir = std::env::temp_dir().join(format!(
+            "streamdock-ipc-export-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = streamdock_store::Store::new(&dir);
+        store.save(&Profile::starter()).expect("save");
+
+        let context = context_with_base(dir.clone());
+        let mut request = request("GET", "/api/export");
+        request.query.push(("token".to_string(), "abc123".into()));
+
+        let response = route(&context, &request);
+        assert_eq!(response.status, 200);
+        assert_eq!(response.content_type, "application/zip");
+        assert!(response.body.starts_with(b"PK"));
+        assert!(response
+            .download_name
+            .as_deref()
+            .unwrap_or("")
+            .ends_with(".zip"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_import_is_forwarded_to_the_daemon() {
+        let (context, commands) = context_with_commands();
+        let mut request = request("POST", "/api/import");
+        request
+            .headers
+            .push(("x-token".to_string(), "abc123".to_string()));
+        request.body = b"PK fake archive".to_vec();
+
+        let worker = context.clone();
+        let handle = std::thread::spawn(move || route(&worker, &request));
+
+        match commands.recv().expect("an import command") {
+            Command::Import {
+                bytes,
+                new_name,
+                reply,
+            } => {
+                assert_eq!(bytes, b"PK fake archive");
+                assert!(new_name.is_none());
+                let _ = reply.send(Reply::Ok(State::new(Profile::starter(), 0)));
+            }
+            _ => panic!("expected an import command"),
+        }
+
+        assert_eq!(handle.join().expect("thread").status, 200);
     }
 }

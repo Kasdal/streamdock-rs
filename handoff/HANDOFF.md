@@ -203,7 +203,13 @@ orientation, no mirroring.
 | `crates/daemon/src/painter.rs` | Tile encoding, animation clock, animation cache |
 | `crates/daemon/src/tray.rs` | Tray icon and its menu on its own thread |
 | `crates/daemon/src/single.rs` | Named mutex, one daemon per machine |
+| `crates/daemon/build.rs` | App icon and version resource |
+| `crates/daemon/assets/streamdock.ico` | App and tray icon |
 | `crates/cli/src/autostart.rs` | Per-user Run key install and remove |
+| `build-release.ps1` | Build the portable package and the zip |
+| `packaging/install.ps1` | Per-user install, autostart, Start menu shortcut |
+| `packaging/uninstall.ps1` | Remove the program, keep profiles on request |
+| `packaging/sign.ps1` | Sign both binaries with a certificate |
 | `crates/cli/src/main.rs` | Command line and command handlers |
 
 Commands: `list`, `desc`, `init`, `watch`, `capture`, `brightness`, `led`,
@@ -515,7 +521,7 @@ Measured requirement: rotate by 270 degrees at the end, not at the start.
 | M3 | Tauri UI with grid, key editor, drag and drop, live preview | A user builds a 15 key page without a CLI |
 | M4 (done) | Text, images, SVG, icons, GIF, phases, themes, zip export and import | A page with icons and one animation runs |
 | M5 | Per application profiles, HTTP actions, plugin host | A profile switches when the user changes application |
-| M6 | Signing, installer, update check, docs, privacy text | A stranger can install and use it |
+| M6 (part done) | Installer and docs are in. Signing needs a certificate. Update check and privacy text are open. | A stranger can install and use it |
 
 ## 17. Open hardware questions
 
@@ -946,4 +952,50 @@ Open work that this session added:
 2. A theme editor for named themes, not only two colours.
 3. Bundle a few more icons, and a small preview of each in the editor.
 4. Check the Apache 2.0 notice in the installer and the about box.
+
+## 28. Session 2 part 10: editor transfer buttons, app icon and a release package
+
+Date: 2026-11-01. A profile now moves with two buttons in the editor, and the
+daemon ships as a package a stranger can install.
+
+| Test | Result |
+| --- | --- |
+| `GET /api/export` | A zip download with the profile, the GIF and `icons/mic.svg` |
+| `POST /api/import` | The profile became active and the panel repainted |
+| App icon | Embedded in `streamdockd.exe`, shown by Explorer |
+| Tray icon | Uses the embedded icon |
+| No console | The release daemon runs without a window |
+| Log file | `%LOCALAPPDATA%\StreamDock\logs\daemon.log` |
+| Package | `dist\StreamDock-0.2.0.zip` with both binaries and the scripts |
+| Install | Copied to a temp target, `streamdock list` works from there |
+| Uninstall | Removed the program and kept the profiles with `-KeepProfiles` |
+| Signing | Script is ready, no certificate was available |
+
+Design notes:
+
+1. `Command::Import` carries the zip bytes to the daemon, so only the daemon
+   thread writes the profile and repaints.
+2. The import endpoint replaces the active profile. The UI confirms first,
+   because a profile with the same name is overwritten.
+3. `GET /api/export` takes the token in the query, because a download link
+   cannot set a header. Every other API call uses `X-Token`.
+4. `Content-Disposition` uses a filtered file name, so no header injection is
+   possible.
+5. The HTTP body limit is now 16 MiB, because a profile zip can hold pictures.
+6. `build.rs` uses `winres` and the GNU `windres`. If the resource compiler is
+   missing the build continues and the tray shows the system icon.
+7. A release build uses the `windows` subsystem. `log` writes to a file and
+   only touches stdout when a console is attached, so `println!` cannot panic
+   on a missing console.
+8. The installer is a PowerShell script, not an MSI or NSIS. It needs no extra
+   tool and works per user without administrator rights.
+
+Open work that this session added:
+
+1. A code signing certificate, and the SmartScreen reputation that follows.
+2. A real MSI or NSIS package, and an update check with a signed manifest.
+3. A privacy statement, and the first run text about keystroke injection.
+4. Reduce the binary size: the release build is about 10 MB per binary.
+   `opt-level = "z"`, `lto = true` and `panic = "abort"` are good next steps.
+5. An editor "about" box with the version and the Roboto notice.
 

@@ -180,11 +180,17 @@ impl Store {
     /// Returns the number of asset files that were added. An asset that is
     /// missing on disk is skipped, so an export never fails on a stale path.
     pub fn export(&self, name: &str, out: &Path) -> Result<usize> {
+        let (bytes, count) = self.export_bytes(name)?;
+        std::fs::write(out, bytes)?;
+        Ok(count)
+    }
+
+    /// Write a profile and its assets into one zip in memory.
+    pub fn export_bytes(&self, name: &str) -> Result<(Vec<u8>, usize)> {
         let profile = self.load(name)?;
         let text = serde_json::to_string_pretty(&profile)?;
 
-        let file = std::fs::File::create(out)?;
-        let mut zip = zip::ZipWriter::new(file);
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let options =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
@@ -204,8 +210,8 @@ impl Store {
             count += 1;
         }
 
-        zip.finish().map_err(zip_error)?;
-        Ok(count)
+        let cursor = zip.finish().map_err(zip_error)?;
+        Ok((cursor.into_inner(), count))
     }
 
     /// Read a profile and its assets from one zip file.
@@ -214,7 +220,20 @@ impl Store {
     /// cannot place a file somewhere else on the disk.
     pub fn import(&self, archive: &Path, new_name: Option<&str>) -> Result<Profile> {
         let file = std::fs::File::open(archive)?;
-        let mut zip = zip::ZipArchive::new(file).map_err(zip_error)?;
+        self.import_from(file, new_name)
+    }
+
+    /// Read a profile and its assets from zip bytes.
+    pub fn import_bytes(&self, bytes: &[u8], new_name: Option<&str>) -> Result<Profile> {
+        self.import_from(std::io::Cursor::new(bytes), new_name)
+    }
+
+    fn import_from<R: Read + std::io::Seek>(
+        &self,
+        reader: R,
+        new_name: Option<&str>,
+    ) -> Result<Profile> {
+        let mut zip = zip::ZipArchive::new(reader).map_err(zip_error)?;
 
         let mut profile_text: Option<String> = None;
         let mut files: Vec<(String, Vec<u8>)> = Vec::new();
@@ -483,5 +502,25 @@ mod tests {
         assert!(!safe_relative("other/a.png"));
         assert!(!safe_relative("assets"));
         assert!(!safe_relative("C:/assets/a.png"));
+    }
+
+    #[test]
+    fn a_zip_in_memory_round_trips() {
+        let dir = temp_dir("zip-bytes");
+        let store = Store::new(&dir);
+        let profile = sample();
+        store.save(&profile).expect("save");
+
+        let (bytes, count) = store.export_bytes(&profile.name).expect("export");
+        assert_eq!(count, 0);
+        assert!(bytes.starts_with(b"PK"));
+
+        let other = temp_dir("zip-bytes-2");
+        let store2 = Store::new(&other);
+        let imported = store2.import_bytes(&bytes, Some("FromBytes")).expect("import");
+        assert_eq!(imported.name, "FromBytes");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&other);
     }
 }
