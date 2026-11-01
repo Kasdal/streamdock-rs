@@ -1332,3 +1332,50 @@ Open work:
 3. The app has no test for the guard. A unit test cannot start two Tauri
    windows, so the table above is the record.
 
+## 36. Session 3 part 2: native save dialog for export
+
+Date: 2026-11-01. Export now asks for a file with the Windows save dialog. The
+Export button no longer writes a fixed name into Downloads.
+
+How it works:
+
+1. The app uses `tauri-plugin-dialog` 2.8.4. The plugin runs the dialog on the
+   main thread and answers through a callback.
+2. `export_profile` is an `async` command, so it runs off the main thread. It
+   waits for the dialog with `blocking_save_file`, which waits on a channel and
+   cannot block the event loop.
+3. The command fetches the zip first and shows the dialog second. A failed
+   fetch shows the error in the page and opens no dialog.
+4. The suggested name comes from `/api/state`: `profile.name` plus `.zip`. The
+   characters `\ / : * ? " < > |` become `-`. With no name it falls back to
+   `StreamDock-profile.zip`.
+5. The dialog starts in `%USERPROFILE%\Downloads` when that folder exists.
+6. A cancel returns null. The page shows no message for null.
+7. Differences from item 2 of the plan: the dialog needs no capability file,
+   because the command calls it from Rust and not from the page.
+
+Evidence, measured with the release build, the daemon and the window running:
+
+| Test | Result |
+| --- | --- |
+| Click Export in the window | A native dialog named `Export profile` opens |
+| Suggested name | `Default.zip`, from the profile name |
+| Start folder | Downloads |
+| Save to a chosen path | Zip written, 1082 bytes, starts with `PK` |
+| Zip content | `Default.json`, 12889 bytes |
+| Command result | The chosen path as a string |
+| Cancel with Escape | Command returns null, no file written |
+| Daemon down | Command fails with "the daemon is not running", no dialog |
+
+The dialog was driven with the Windows UI Automation tree and `SendKeys`. The
+page was driven through the WebView2 DevTools port, which the app opens only
+when `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` sets `--remote-debugging-port`.
+That variable was set for the test only.
+
+Open work:
+
+1. Remember the window size and position.
+2. The export writes with `std::fs::write`, so a large profile holds the zip in
+   memory twice. Fine for the current sizes.
+3. A dialog test needs a human or UI Automation. The table above is the record.
+

@@ -1025,7 +1025,7 @@ async function exportProfile() {
   if (tauri) {
     try {
       const path = await tauri.core.invoke("export_profile");
-      message("exported to " + path, "ok");
+      if (path) message("exported to " + path, "ok");
     } catch (e) {
       message(String(e), "bad");
     }

@@ -22,6 +22,7 @@ use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_dialog::DialogExt;
 
 static TRAY_READY: AtomicBool = AtomicBool::new(false);
 
@@ -41,6 +42,7 @@ fn main() {
             trace("a second copy started; show the window");
             show_editor(app);
         }))
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![endpoint, export_profile])
         .setup(|app| {
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -123,22 +125,72 @@ fn endpoint() -> Option<Endpoint> {
     }
 }
 
-/// Save the active profile as a zip in the user's Downloads folder.
+/// Ask for a file and save the active profile there.
+///
+/// The dialog is not shown when the daemon is down or it refuses the export,
+/// so a broken export never opens an empty save window.
 #[tauri::command]
-fn export_profile() -> Result<String, String> {
+async fn export_profile(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let endpoint = endpoint().ok_or("the daemon is not running")?;
     let path = format!("/api/export?token={}", endpoint.token);
     let bytes = http_get(endpoint.port, &endpoint.token, &path)?;
 
-    let folder = std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .ok_or_else(|| "no USERPROFILE".to_string())?
-        .join("Downloads");
-    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("Export profile")
+        .set_file_name(export_name(endpoint.port, &endpoint.token))
+        .add_filter("Zip archive", &["zip"]);
+    if let Some(folder) = downloads_folder() {
+        dialog = dialog.set_directory(folder);
+    }
 
-    let file = folder.join("StreamDock-profile.zip");
+    // The command runs off the main thread, so this wait is safe. The dialog
+    // itself is shown on the main thread.
+    let Some(chosen) = dialog.blocking_save_file() else {
+        trace("export cancelled");
+        return Ok(None);
+    };
+
+    let file = chosen.into_path().map_err(|e| e.to_string())?;
     std::fs::write(&file, bytes).map_err(|e| e.to_string())?;
-    Ok(file.display().to_string())
+    trace(&format!("exported the profile to {}", file.display()));
+    Ok(Some(file.display().to_string()))
+}
+
+/// A suggested file name: the profile name, as a zip.
+fn export_name(port: u16, token: &str) -> String {
+    let name = http_get(port, token, "/api/state")
+        .ok()
+        .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok())
+        .and_then(|value| {
+            let name = value.get("profile")?.get("name")?.as_str()?.to_string();
+            Some(name)
+        });
+
+    match name {
+        Some(name) => {
+            let clean: String = name
+                .chars()
+                .map(|c| if "\\/:*?\"<>|".contains(c) { '-' } else { c })
+                .collect();
+            let clean = clean.trim().to_string();
+            if clean.is_empty() {
+                "StreamDock-profile.zip".to_string()
+            } else {
+                format!("{clean}.zip")
+            }
+        }
+        None => "StreamDock-profile.zip".to_string(),
+    }
+}
+
+/// The user's Downloads folder, when it exists.
+fn downloads_folder() -> Option<PathBuf> {
+    let folder = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)?
+        .join("Downloads");
+    folder.is_dir().then_some(folder)
 }
 
 /// The endpoint, after starting the daemon when it is not running.

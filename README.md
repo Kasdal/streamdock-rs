@@ -372,12 +372,18 @@ the API.
 | Close button | Hides the window; the app keeps running in the tray |
 | Tray menu | Show editor, Reload profile, Quit |
 | Second start | The running window comes forward; the second copy exits |
-| Export | Writes `StreamDock-profile.zip` to your Downloads folder |
+| Export | Native save dialog, with the profile name as the suggested file |
 | API | The page calls the daemon API with the token, from a CORS allowlist |
 
 One copy of the window runs at a time. The app holds a named mutex, so a
 second start hands its command line to the first copy and exits. The first
 copy shows and focuses its window.
+
+Export asks for a file with the Windows save dialog. The dialog opens in the
+Downloads folder and suggests `<profile>.zip`. The export command fetches the
+zip before it shows the dialog, so a failed export never opens an empty save
+window. If no daemon answers, the page shows the error and no dialog appears.
+Cancel writes no file.
 
 The desktop window is a Tauri 2 app, so it needs the MSVC toolchain. The rest of
 the project builds with GNU, so the crate sits outside the workspace.
