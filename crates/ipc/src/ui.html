@@ -152,6 +152,7 @@
         <option value="color">one colour</option>
         <option value="text">text</option>
         <option value="file">image file</option>
+        <option value="svg">SVG file</option>
         <option value="animation">animated GIF</option>
         <option value="icon">icon name, M4</option>
       </select>
@@ -167,6 +168,11 @@
 
     <div id="f-file-row" class="hidden">
       <label>File path <input id="f-path" type="text" placeholder="C:\pictures\logo.jpg"></label>
+      <div id="f-phase-row" class="hidden">
+        <label>Start phase, ms (empty means automatic)
+          <input id="f-phase" type="number" min="0" step="10" placeholder="automatic">
+        </label>
+      </div>
     </div>
 
     <div id="f-icon-row" class="hidden">
@@ -309,8 +315,8 @@ function tileUrl(key) {
 
 /// Upload a dropped image and make it the key image.
 async function dropImage(key, file) {
-  if (!/^image\/(jpeg|png|gif)$/i.test(file.type)) {
-    message("drop a JPEG, PNG or GIF file", "bad");
+  if (!/^image\/(jpeg|png|gif|svg\+xml)$/i.test(file.type)) {
+    message("drop a JPEG, PNG, GIF or SVG file", "bad");
     return;
   }
   try {
@@ -324,9 +330,13 @@ async function dropImage(key, file) {
     const profile = copyProfile();
     const page = profile.pages[state.page];
     const config = page.keys[String(key)] || {};
-    config.image = /gif/i.test(file.type)
-      ? { kind: "animation", path: asset.path }
-      : { kind: "file", path: asset.path };
+    if (/svg/i.test(file.type) || /\.svg$/i.test(file.name)) {
+      config.image = { kind: "svg", path: asset.path, background: "#202020" };
+    } else if (/gif/i.test(file.type) || /\.gif$/i.test(file.name)) {
+      config.image = { kind: "animation", path: asset.path };
+    } else {
+      config.image = { kind: "file", path: asset.path };
+    }
     page.keys[key] = config;
     await saveProfile(profile, "image set on key " + key, state.rev);
     selected = key;
@@ -360,8 +370,12 @@ function fillEditor() {
   $("f-bg").value = colour(image && image.background, "#202020");
   $("f-fg").value = colour(image && image.foreground, "#f0f0f0");
   $("f-color").value = colour(image && image.color, "#202020");
-  $("f-path").value = image && (image.kind === "file" || image.kind === "animation") ? image.path || "" : "";
+  $("f-path").value = image && (image.kind === "file" || image.kind === "animation" || image.kind === "svg") ? image.path || "" : "";
   $("f-icon").value = image && image.kind === "icon" ? image.name || "" : "";
+  $("f-phase").value =
+    image && image.kind === "animation" && typeof image.phase_ms === "number"
+      ? String(image.phase_ms)
+      : "";
   $("f-actions").value = JSON.stringify(config.actions || [], null, 2);
   updateKindRows();
   editRev = state ? state.rev : 0;
@@ -372,7 +386,8 @@ function fillEditor() {
 function updateKindRows() {
   const kind = $("f-kind").value;
   $("f-text-row").classList.toggle("hidden", kind !== "text");
-  $("f-file-row").classList.toggle("hidden", kind !== "file" && kind !== "animation");
+  $("f-file-row").classList.toggle("hidden", kind !== "file" && kind !== "animation" && kind !== "svg");
+  $("f-phase-row").classList.toggle("hidden", kind !== "animation");
   $("f-icon-row").classList.toggle("hidden", kind !== "icon");
   $("f-color-row").classList.toggle("hidden", kind !== "color");
 }
@@ -390,7 +405,17 @@ function buildImage() {
     };
   }
   if (kind === "file") return { kind: "file", path: $("f-path").value };
-  if (kind === "animation") return { kind: "animation", path: $("f-path").value };
+  if (kind === "svg") {
+    return { kind: "svg", path: $("f-path").value, background: $("f-bg").value };
+  }
+  if (kind === "animation") {
+    const spec = { kind: "animation", path: $("f-path").value };
+    const phase = Number($("f-phase").value);
+    if ($("f-phase").value !== "" && Number.isFinite(phase) && phase >= 0) {
+      spec.phase_ms = Math.round(phase);
+    }
+    return spec;
+  }
   return { kind: "icon", name: $("f-icon").value, background: $("f-bg").value };
 }
 

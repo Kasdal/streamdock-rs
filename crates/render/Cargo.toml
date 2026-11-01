@@ -3,9 +3,11 @@ name = "streamdock-render"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Tile renderer for Stream Dock keys: colour, text and image files"
+description = "Tile renderer for Stream Dock keys: colour, text, images, SVG and GIF"
 
 [dependencies]
+ab_glyph = "0.2"
+resvg = "0.45"
 streamdock-core = { path = "../core" }
 streamdock-store = { path = "../store" }
 

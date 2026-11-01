@@ -190,6 +190,8 @@ orientation, no mirroring.
 | `crates/store/src/profile.rs` | Profile, page, key, image and action model, validation |
 | `crates/store/src/file_store.rs` | One JSON file per profile, atomic save |
 | `crates/render/src/lib.rs` | Key tiles from a profile, contact sheet |
+| `crates/render/src/text.rs` | TrueType labels with wrap and shrink, bitmap fallback |
+| `crates/render/src/svg.rs` | SVG rendering through resvg |
 | `crates/actions/src/lib.rs` | Hotkey, text, media, launch, multi, page actions |
 | `crates/ipc/src/lib.rs` | Loopback HTTP server, token, shared state, commands |
 | `crates/ipc/src/http.rs` | Bounded HTTP request parse and response write |
@@ -509,7 +511,7 @@ Measured requirement: rotate by 270 degrees at the end, not at the start.
 | M2 (done without IPC) | Daemon, profile store, action engine for hotkey, text, launch, multi | Keys act while the UI is closed |
 | M3 (part done) | Key grid, key editor, live preview in a browser page | A user builds a 15 key page without a CLI |
 | M3 | Tauri UI with grid, key editor, drag and drop, live preview | A user builds a 15 key page without a CLI |
-| M4 (part done) | Renderer with text, images and GIF animation are in. SVG, icons, themes and import are open. | A page with one animation runs |
+| M4 (part done) | Text, images, SVG, icons and GIF animation are in. Themes, import and export are open. | A page with an icon and one animation runs |
 | M5 | Per application profiles, HTTP actions, plugin host | A profile switches when the user changes application |
 | M6 | Signing, installer, update check, docs, privacy text | A stranger can install and use it |
 
@@ -862,4 +864,43 @@ Open work that this session added:
    the animation clocks exact.
 4. Show a moving frame in the editor, not only frame 0.
 5. Measure the real frame rate limit on the panel with many animated keys.
+
+## 26. Session 2 part 8: font, SVG, animation phases and a memory budget
+
+Date: 2026-11-01. The renderer now uses a real font and draws SVG icons.
+Animations start at their own phase, and their memory has a budget.
+
+| Test | Result |
+| --- | --- |
+| TrueType label | `MUTE` and `Scene 2` are readable, mixed case kept |
+| SVG icon | A microphone icon on key 3 |
+| Animation phase | Keys 4 and 5 run the same GIF out of step |
+| Frame budget | A large animation is merged until it fits |
+
+Design notes:
+
+1. Text uses `ab_glyph` with a system font: `segoeui.ttf`, then `arial.ttf`,
+   `tahoma.ttf` and `verdana.ttf`. `STREAMDOCK_FONT` overrides the choice.
+2. The page picks one pixel size for its labels. The size is the smallest
+   value that fits every label on one line, capped at 42 percent of the key.
+   That keeps `1` and `10` the same size.
+3. A label that still does not fit wraps, and then the size shrinks.
+4. The 5x7 bitmap font is the fallback when no font file is found.
+5. An `icon` reads `<profile folder>/icons/<name>.svg`, then falls back to the
+   name as text.
+6. SVG is rendered with `resvg` into a pixmap that is first filled with the
+   key background, so the result is opaque.
+7. Each animation starts at `(key - 1) * 120 ms` into its loop unless the
+   profile sets `phase_ms`.
+8. An encoded animation is merged frame by frame until it fits 1.5 MB. The
+   loop time does not change.
+9. The animation cache is cleared when it holds 64 entries or 24 MB.
+
+Open work that this session added:
+
+1. Bundle a font with an open licence, and an icon set, so a product build is
+   not tied to Windows fonts.
+2. Let the editor upload an icon into `icons/` with a name.
+3. Add a "fit" choice for SVG (contain or cover).
+4. Support SVG text. `usvg` needs a font database for it.
 

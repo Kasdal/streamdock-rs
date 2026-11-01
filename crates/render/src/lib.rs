@@ -13,9 +13,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use streamdock_core::image::{self, Rgb};
-use streamdock_core::tile;
-use streamdock_core::{animation, model, proto};
+use streamdock_core::{animation, model, proto, tile};
 use streamdock_store::profile::{parse_color, ImageSpec, Key, Page};
+
+pub mod svg;
+pub mod text;
 
 /// Default tile background.
 pub const BACKGROUND: [u8; 3] = [32, 32, 36];
@@ -23,9 +25,13 @@ pub const BACKGROUND: [u8; 3] = [32, 32, 36];
 /// Default tile text colour.
 pub const FOREGROUND: [u8; 3] = [240, 240, 240];
 
-/// Largest glyph scale for a label. A cap keeps a long label from touching
-/// the edge of the key.
-pub const MAX_LABEL_SCALE: usize = 6;
+/// Largest text size for a label, as a fraction of the key side.
+pub const MAX_LABEL_FRACTION: f32 = 0.42;
+
+/// Largest text size for a label, in pixels.
+pub fn max_label_px(size: (u16, u16)) -> f32 {
+    (size.1 as f32 * MAX_LABEL_FRACTION).max(10.0)
+}
 
 /// The text that a key shows, if the key has text.
 fn label_of(config: &Key) -> Option<String> {
@@ -37,19 +43,28 @@ fn label_of(config: &Key) -> Option<String> {
     }
 }
 
-/// One glyph scale for a group of keys, so labels on one page match.
+/// One text size for a group of keys, so labels on one page match.
 ///
-/// A long label shrinks the whole group. A key without text does not count.
+/// The size is in pixels. A long label shrinks the whole group. A key without
+/// text does not count.
 pub fn page_scale(page: &Page, size: (u16, u16), first: u8, last: u8) -> usize {
-    let mut scale = MAX_LABEL_SCALE;
+    let limit = max_label_px(size);
+    let mut px = limit;
+
     for key in first..=last {
         if let Some(config) = page.key(key) {
             if let Some(label) = label_of(config) {
-                scale = scale.min(tile::fit_scale(&label, size.0 as usize, size.1 as usize));
+                px = px.min(text::fit_px(
+                    &label,
+                    size.0 as f32,
+                    size.1 as f32,
+                    limit,
+                ));
             }
         }
     }
-    scale.max(1)
+
+    px.round().clamp(9.0, limit) as usize
 }
 
 /// The scale for a key of this size on this page.
@@ -83,15 +98,15 @@ pub fn resolve_path(base: &Path, path: &str) -> PathBuf {
 }
 
 /// Compose the tile for one key, upright.
-pub fn compose(config: Option<&Key>, size: (u16, u16), scale: usize) -> Result<Rgb, String> {
-    compose_in(config, size, scale, Path::new("."))
+pub fn compose(config: Option<&Key>, size: (u16, u16), size_px: usize) -> Result<Rgb, String> {
+    compose_in(config, size, size_px, Path::new("."))
 }
 
 /// Compose the tile for one key, with a base folder for relative image paths.
 pub fn compose_in(
     config: Option<&Key>,
     size: (u16, u16),
-    scale: usize,
+    size_px: usize,
     base: &Path,
 ) -> Result<Rgb, String> {
     let (width, height) = size;
@@ -113,7 +128,7 @@ pub fn compose_in(
             } => {
                 let bg = parse_color(background)?;
                 let fg = parse_color(foreground)?;
-                Ok(tile::label_tile_scaled(text, size, bg, fg, scale))
+                Ok(text::label_tile(text, size, bg, fg, size_px))
             }
             ImageSpec::File { path } => {
                 let resolved = resolve_path(base, path);
@@ -123,7 +138,15 @@ pub fn compose_in(
                 let decoded = image::decode(&bytes)?;
                 Ok(image::fit_cover(&decoded, width, height))
             }
-            ImageSpec::Animation { path } => {
+            ImageSpec::Svg { path, background } => {
+                let resolved = resolve_path(base, path);
+                let bytes = std::fs::read(&resolved).map_err(|e| {
+                    format!("cannot read svg {}: {e}", resolved.display())
+                })?;
+                let bg = parse_color(background)?;
+                svg::render_svg(&bytes, size, bg)
+            }
+            ImageSpec::Animation { path, .. } => {
                 // The tile shows the first frame. The daemon uses
                 // `load_animation` for the moving version.
                 let resolved = resolve_path(base, path);
@@ -139,28 +162,20 @@ pub fn compose_in(
                 Ok(image::fit_cover(&rgb, width, height))
             }
             ImageSpec::Icon { name, background } => {
-                // The icon library is not here yet. Show the name instead of
-                // an empty key, so the profile still makes sense.
                 let bg = parse_color(background)?;
-                Ok(tile::label_tile_scaled(
-                    name,
-                    size,
-                    bg,
-                    FOREGROUND,
-                    scale,
-                ))
+                // An icon file wins. Without one, the name is drawn, so a
+                // profile still shows something.
+                let icon = base.join("icons").join(format!("{name}.svg"));
+                match std::fs::read(&icon) {
+                    Ok(bytes) => svg::render_svg(&bytes, size, bg),
+                    Err(_) => Ok(text::label_tile(name, size, bg, FOREGROUND, size_px)),
+                }
             }
         };
     }
 
     if let Some(label) = &key.label {
-        return Ok(tile::label_tile_scaled(
-            label,
-            size,
-            BACKGROUND,
-            FOREGROUND,
-            scale,
-        ));
+        return Ok(text::label_tile(label, size, BACKGROUND, FOREGROUND, size_px));
     }
 
     Ok(tile::solid_tile(BACKGROUND, size))
@@ -169,18 +184,18 @@ pub fn compose_in(
 /// Compose, rotate and encode one key tile.
 ///
 /// The result is a JPEG that the firmware accepts.
-pub fn encode(config: Option<&Key>, size: (u16, u16), scale: usize) -> Result<Vec<u8>, String> {
-    encode_in(config, size, scale, Path::new("."))
+pub fn encode(config: Option<&Key>, size: (u16, u16), size_px: usize) -> Result<Vec<u8>, String> {
+    encode_in(config, size, size_px, Path::new("."))
 }
 
 /// Compose, rotate and encode one key tile, with a base folder for images.
 pub fn encode_in(
     config: Option<&Key>,
     size: (u16, u16),
-    scale: usize,
+    size_px: usize,
     base: &Path,
 ) -> Result<Vec<u8>, String> {
-    let upright = compose_in(config, size, scale, base)?;
+    let upright = compose_in(config, size, size_px, base)?;
     let rotated = image::rotate(&upright, model::ROTATION);
     image::encode_max(&rotated, proto::MAX_IMAGE_BYTES)
 }
@@ -206,6 +221,36 @@ impl Animation {
     /// Total loop time in milliseconds.
     pub fn duration_ms(&self) -> u32 {
         self.delays_ms.iter().map(|delay| *delay as u32).sum()
+    }
+
+    /// Total encoded size in bytes.
+    pub fn bytes(&self) -> usize {
+        self.frames.iter().map(|frame| frame.len()).sum()
+    }
+}
+
+/// Largest encoded animation that the renderer keeps for one key.
+pub const MAX_ANIMATION_BYTES: usize = 1_500_000;
+
+/// Merge frames until the animation fits the budget. The loop time is kept.
+fn shrink(animation: &mut Animation, budget: usize) {
+    while animation.bytes() > budget && animation.frames.len() > 1 {
+        let mut frames = Vec::with_capacity(animation.frames.len().div_ceil(2));
+        let mut delays = Vec::with_capacity(frames.capacity());
+
+        let mut index = 0;
+        while index < animation.frames.len() {
+            frames.push(Arc::clone(&animation.frames[index]));
+            let mut delay = animation.delays_ms[index] as u32;
+            if index + 1 < animation.frames.len() {
+                delay += animation.delays_ms[index + 1] as u32;
+            }
+            delays.push(delay.min(10_000) as u16);
+            index += 2;
+        }
+
+        animation.frames = frames;
+        animation.delays_ms = delays;
     }
 }
 
@@ -239,7 +284,9 @@ pub fn load_animation(path: &Path, size: (u16, u16)) -> Result<Animation, String
         ));
     }
 
-    Ok(Animation { frames, delays_ms })
+    let mut animation = Animation { frames, delays_ms };
+    shrink(&mut animation, MAX_ANIMATION_BYTES);
+    Ok(animation)
 }
 
 /// A tile that reports a render fault, so the key never goes blank silently.
@@ -320,7 +367,7 @@ mod tests {
 
     #[test]
     fn a_key_without_config_is_a_dark_tile() {
-        let tile = compose(None, (96, 96), 6).expect("tile");
+        let tile = compose(None, (96, 96), 28).expect("tile");
         assert_eq!((tile.width, tile.height), (96, 96));
         assert!(tile.data.chunks_exact(3).all(|p| p == BACKGROUND));
     }
@@ -331,7 +378,7 @@ mod tests {
             label: Some("MUTE".into()),
             ..Key::default()
         };
-        let tile = compose(Some(&key), (96, 96), 6).expect("tile");
+        let tile = compose(Some(&key), (96, 96), 28).expect("tile");
         let lit = tile
             .data
             .chunks_exact(3)
@@ -348,7 +395,7 @@ mod tests {
             }),
             ..Key::default()
         };
-        let tile = compose(Some(&key), (80, 80), 6).expect("tile");
+        let tile = compose(Some(&key), (80, 80), 28).expect("tile");
         assert!(tile.data.chunks_exact(3).all(|p| p == [255, 0, 0]));
     }
 
@@ -363,7 +410,7 @@ mod tests {
             }),
             ..Key::default()
         };
-        let tile = compose(Some(&key), (96, 96), 6).expect("tile");
+        let tile = compose(Some(&key), (96, 96), 28).expect("tile");
         assert!(tile.data.chunks_exact(3).any(|p| p == [0, 255, 0]));
     }
 
@@ -375,7 +422,7 @@ mod tests {
             }),
             ..Key::default()
         };
-        assert!(compose(Some(&key), (96, 96), 6).is_err());
+        assert!(compose(Some(&key), (96, 96), 28).is_err());
     }
 
     #[test]
@@ -384,7 +431,7 @@ mod tests {
             label: Some("SCENE 1".into()),
             ..Key::default()
         };
-        let jpeg = encode(Some(&key), (96, 96), 6).expect("jpeg");
+        let jpeg = encode(Some(&key), (96, 96), 28).expect("jpeg");
         assert!(jpeg.len() <= proto::MAX_IMAGE_BYTES);
         assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
     }
@@ -411,7 +458,10 @@ mod tests {
         let scale = page_scale(&page, (96, 96), 1, 15);
         let one = compose(Some(&page.keys[&1]), (96, 96), scale).expect("1");
         let ten = compose(Some(&page.keys[&10]), (96, 96), scale).expect("10");
-        assert_eq!(text_rows(&one), text_rows(&ten));
+        let a = text_rows(&one);
+        let b = text_rows(&ten);
+        assert!(a > 0 && b > 0);
+        assert!((a as i32 - b as i32).abs() <= 2, "heights {a} and {b}");
     }
 
     #[test]
@@ -423,7 +473,9 @@ mod tests {
         }
         let one = compose(page.key(1), (96, 96), scale_for(&page, 1)).expect("1");
         let ten = compose(page.key(10), (96, 96), scale_for(&page, 10)).expect("10");
-        assert_eq!(text_rows(&one), text_rows(&ten), "scale {first}");
+        let a = text_rows(&one);
+        let b = text_rows(&ten);
+        assert!((a as i32 - b as i32).abs() <= 2, "heights {a} and {b}, scale {first}");
     }
 
     #[test]
@@ -449,7 +501,10 @@ mod tests {
     #[test]
     fn keys_without_text_do_not_change_the_scale() {
         let page = Page::new("Main");
-        assert_eq!(page_scale(&page, (96, 96), 1, 15), MAX_LABEL_SCALE);
+        assert_eq!(
+            page_scale(&page, (96, 96), 1, 15),
+            max_label_px((96, 96)).round() as usize
+        );
     }
 
     #[test]
@@ -515,6 +570,20 @@ mod tests {
         assert_eq!(&animation.frames[0][..2], &[0xFF, 0xD8]);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shrinking_keeps_the_loop_time() {
+        let mut animation = Animation {
+            frames: (0..4).map(|_| Arc::from(vec![0u8; 10_000])).collect(),
+            delays_ms: vec![10, 20, 30, 40],
+        };
+        assert_eq!(animation.duration_ms(), 100);
+        shrink(&mut animation, 25_000);
+        assert_eq!(animation.frames.len(), 2);
+        assert_eq!(animation.delays_ms, vec![30, 70]);
+        assert_eq!(animation.duration_ms(), 100);
+        assert!(animation.bytes() <= 25_000);
     }
 
     #[test]

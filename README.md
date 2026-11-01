@@ -21,7 +21,10 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Tray icon and autostart | verified on hardware: menu, quit, Run key |
 | Undo and save conflict | verified on hardware: undo, warning on a stale save |
 | Animated GIF keys | verified on hardware: 4 frame loop, keys stay responsive |
-| Unit tests | 128 tests, no device needed |
+| Real text font | verified on hardware: TrueType labels at a readable size |
+| SVG icons | verified on hardware: microphone icon on a key |
+| Animation phases | verified on hardware: two keys run out of step |
+| Unit tests | 142 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -154,8 +157,8 @@ the panel changes within a second. The page needs no build step and no extra
 runtime.
 
 The grid shows the real tile that the daemon draws, not an approximation.
-Drag a JPEG, PNG or GIF file onto a key to set its image. A GIF becomes an
-animation. The file is copied into the `assets` folder next to the profile,
+Drag a JPEG, PNG, GIF or SVG file onto a key to set its image. A GIF becomes
+an animation. The file is copied into the `assets` folder next to the profile,
 so the profile stays portable.
 
 The Undo button restores the profile from before the last save. Ctrl+Z does
@@ -235,17 +238,23 @@ One profile is one JSON file. A page holds keys by number.
 }
 ```
 
-Image kinds: `color`, `text`, `file`, `animation`, `icon` (the icon name is
-drawn as text until the icon library arrives in M4).
+Image kinds: `color`, `text`, `file`, `svg`, `animation`, `icon`.
+
+An `icon` looks for `<profile folder>/icons/<name>.svg`. Without that file,
+the name is drawn as text.
 
 An `animation` is a GIF. Each frame is fitted to the key, rotated and encoded
 once. The daemon keeps at most 60 frames per animation and samples a longer
 GIF down while keeping the loop time. A frame delay is clamped to 20 ms or
-more.
+more. Each key starts at its own point in the loop unless `phase_ms` is set.
 
 A `file` path may be absolute, or relative to the profile folder. The editor
-stores a dropped image as `assets/<name>-<hash>.jpg` or `.png`. JPEG and PNG
+stores a dropped file as `assets/<name>-<hash>.<ext>`. JPEG, PNG, GIF and SVG
 are accepted.
+
+Text uses a system TrueType font and wraps to fit the key. Set
+`STREAMDOCK_FONT` to a font file to override it. The 5x7 bitmap font is the
+fallback when no font is found.
 
 Action types: `hotkey`, `text`, `media`, `launch`, `multi`, `page`,
 `brightness`, `command`. A `command` action runs a program, so a profile with
@@ -321,6 +330,9 @@ Notepad, `ctrl+a` selected it, and `notepad.exe` opened from a key.
 
 A `command` action runs a program. A profile that holds one is user data, so
 the daemon does not ask for confirmation yet. Do this before a release.
+
+Text uses a system font, so no font file is redistributed. A product build
+must bundle a font with a suitable licence and set `STREAMDOCK_FONT`.
 
 The vendor application was never installed or executed.
 The installer payload is not decompressed.

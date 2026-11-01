@@ -143,8 +143,20 @@ pub enum ImageSpec {
     },
     /// A JPEG or PNG file on disk.
     File { path: String },
+    /// An SVG file on disk.
+    Svg {
+        path: String,
+        #[serde(default = "default_background")]
+        background: String,
+    },
     /// An animated GIF file on disk.
-    Animation { path: String },
+    Animation {
+        path: String,
+        /// Start offset in milliseconds. When absent, each key starts at its
+        /// own offset so a page of animations does not blink together.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase_ms: Option<u64>,
+    },
     /// A named icon on a background. The icon library arrives in M4.
     Icon {
         name: String,
@@ -383,7 +395,14 @@ impl ImageSpec {
                 }
                 Ok(())
             }
-            ImageSpec::Animation { path } => {
+            ImageSpec::Svg { path, background } => {
+                parse_color(background)?;
+                if path.trim().is_empty() {
+                    return Err("svg file path is empty".into());
+                }
+                Ok(())
+            }
+            ImageSpec::Animation { path, .. } => {
                 if path.trim().is_empty() {
                     return Err("animation file path is empty".into());
                 }

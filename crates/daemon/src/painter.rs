@@ -20,6 +20,12 @@ use crate::panel::Panel;
 /// Loaded animations kept in memory.
 pub const MAX_CACHE: usize = 64;
 
+/// Largest total encoded size of the animation cache.
+pub const MAX_CACHE_BYTES: usize = 24_000_000;
+
+/// Automatic start offset per key, so a page does not blink in lockstep.
+pub const AUTO_PHASE_MS: u64 = 120;
+
 /// Longest sleep of the coordinator loop when nothing happens.
 pub const IDLE_TICK_MS: u64 = 8;
 
@@ -37,6 +43,7 @@ struct Running {
 pub struct Painter {
     base: PathBuf,
     cache: HashMap<(PathBuf, u16), Arc<render::Animation>>,
+    cache_bytes: usize,
     running: Vec<Running>,
 }
 
@@ -46,6 +53,7 @@ impl Painter {
         Self {
             base,
             cache: HashMap::new(),
+            cache_bytes: 0,
             running: Vec::new(),
         }
     }
@@ -75,19 +83,23 @@ impl Painter {
         for key in 1..=model::KEY_COUNT {
             let size = model::key_size(key);
 
-            if let Some(path) = animation_path(page, key) {
+            if let Some((path, phase_ms)) = animation_spec(page, key) {
                 match self.animation(path, size) {
                     Ok(animation) => {
-                        let first = Arc::clone(&animation.frames[0]);
-                        panel.key(key, first);
+                        // Each key starts at its own point in the loop, unless
+                        // the profile asks for a phase.
+                        let phase = phase_ms.unwrap_or_else(|| (key as u64 - 1) * AUTO_PHASE_MS);
+                        let (index, wait) = frame_at(&animation, phase);
+
+                        panel.key(key, Arc::clone(&animation.frames[index]));
 
                         if animation.frames.len() > 1 {
-                            let delay = animation.delays_ms[0] as u64;
                             self.running.push(Running {
                                 key,
                                 frames: Arc::clone(&animation),
-                                index: 0,
-                                next: Instant::now() + Duration::from_millis(delay.max(MIN_FRAME_MS)),
+                                index,
+                                next: Instant::now()
+                                    + Duration::from_millis(wait.max(MIN_FRAME_MS)),
                             });
                         }
                         queued += 1;
@@ -176,17 +188,88 @@ impl Painter {
         }
 
         let animation = Arc::new(render::load_animation(&resolved, size)?);
-        if self.cache.len() >= MAX_CACHE {
+        let bytes = animation.bytes();
+
+        if self.cache.len() >= MAX_CACHE || self.cache_bytes + bytes > MAX_CACHE_BYTES {
             self.cache.clear();
+            self.cache_bytes = 0;
         }
+
+        self.cache_bytes += bytes;
         self.cache.insert(cache_key, Arc::clone(&animation));
         Ok(animation)
     }
 }
 
-fn animation_path(page: &Page, key: u8) -> Option<&str> {
+/// What the profile asks for on this key: the file and an optional phase.
+fn animation_spec(page: &Page, key: u8) -> Option<(&str, Option<u64>)> {
     match page.key(key).and_then(|config| config.image.as_ref()) {
-        Some(ImageSpec::Animation { path }) => Some(path.as_str()),
+        Some(ImageSpec::Animation { path, phase_ms }) => Some((path.as_str(), *phase_ms)),
         _ => None,
+    }
+}
+
+/// Frame that is on screen after `offset_ms`, and the time until the next one.
+pub fn frame_at(animation: &render::Animation, offset_ms: u64) -> (usize, u64) {
+    let duration = animation.duration_ms() as u64;
+    if duration == 0 || animation.frames.is_empty() {
+        return (0, 0);
+    }
+
+    let mut left = offset_ms % duration;
+    for (index, delay) in animation.delays_ms.iter().enumerate() {
+        let delay = (*delay as u64).max(MIN_FRAME_MS);
+        if left < delay {
+            return (index, delay - left);
+        }
+        left -= delay;
+    }
+
+    (0, 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn animation() -> render::Animation {
+        render::Animation {
+            frames: (0..4).map(|_| Arc::from(vec![0u8; 10])).collect(),
+            delays_ms: vec![100, 100, 100, 100],
+        }
+    }
+
+    #[test]
+    fn the_first_frame_is_shown_at_zero() {
+        assert_eq!(frame_at(&animation(), 0), (0, 100));
+    }
+
+    #[test]
+    fn a_phase_selects_the_frame_and_the_wait() {
+        assert_eq!(frame_at(&animation(), 120), (1, 80));
+        assert_eq!(frame_at(&animation(), 250), (2, 50));
+    }
+
+    #[test]
+    fn a_phase_beyond_the_loop_wraps() {
+        assert_eq!(frame_at(&animation(), 450), (0, 50));
+        // 1000 ms is 200 ms into the 400 ms loop, so frame 2 is on screen.
+        assert_eq!(frame_at(&animation(), 1000), (2, 100));
+    }
+
+    #[test]
+    fn an_empty_animation_returns_the_first_frame() {
+        let empty = render::Animation {
+            frames: Vec::new(),
+            delays_ms: Vec::new(),
+        };
+        assert_eq!(frame_at(&empty, 500), (0, 0));
+    }
+
+    #[test]
+    fn an_automatic_phase_spreads_the_keys() {
+        assert_eq!((1u64 - 1) * AUTO_PHASE_MS, 0);
+        assert_eq!((2u64 - 1) * AUTO_PHASE_MS, 120);
+        assert_eq!((5u64 - 1) * AUTO_PHASE_MS, 480);
     }
 }

@@ -607,7 +607,11 @@ fn image_summary(spec: &ImageSpec) -> String {
         ImageSpec::Color { color } => format!("colour {color}"),
         ImageSpec::Text { text, .. } => format!("text {text:?}"),
         ImageSpec::File { path } => format!("file {path}"),
-        ImageSpec::Animation { path } => format!("animation {path}"),
+        ImageSpec::Svg { path, .. } => format!("svg {path}"),
+        ImageSpec::Animation { path, phase_ms } => match phase_ms {
+            Some(phase) => format!("animation {path} phase {phase} ms"),
+            None => format!("animation {path}"),
+        },
         ImageSpec::Icon { name, .. } => format!("icon {name}"),
     }
 }
