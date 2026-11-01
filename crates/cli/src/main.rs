@@ -14,6 +14,8 @@
 //!   bench                    measure the image transfer rate
 //!   send                     write one raw report (explicit opt in)
 
+mod autostart;
+
 use std::time::{Duration, Instant};
 
 use streamdock_core::device::{Device, Poll};
@@ -44,6 +46,7 @@ fn usage() {
     eprintln!("  profile <list|init|demo|show|validate> [--name N] [--dir PATH]");
     eprintln!("  preview [--name N] [--page N] [--out FILE] [--dir PATH]");
     eprintln!("  ui");
+    eprintln!("  autostart <install|remove|status> [--profile N]");
     eprintln!("  send --hex 4352540000444953 --i-understand");
 }
 
@@ -92,6 +95,7 @@ fn main() {
         "profile" => profile_cmd(&args),
         "preview" => preview(&args),
         "ui" => ui(),
+        "autostart" => autostart_cmd(&args),
         "send" => send(&args),
         "-h" | "--help" | "help" => {
             usage();
@@ -742,6 +746,44 @@ fn ui() -> Result<()> {
     let url = format!("http://127.0.0.1:{port}/?token={token}");
     streamdock_actions::launch(&url).map_err(|e| Error::Message(e.to_string()))?;
     println!("opened {url}");
+    Ok(())
+}
+
+fn autostart_cmd(args: &[String]) -> Result<()> {
+    let sub = args.get(1).map(|s| s.as_str()).unwrap_or("status");
+
+    match sub {
+        "install" => {
+            let mut extra: Vec<String> = Vec::new();
+            if let Some(profile) = arg_value(args, "--profile") {
+                extra.push("--profile".to_string());
+                extra.push(profile);
+            }
+            let borrowed: Vec<&str> = extra.iter().map(|s| s.as_str()).collect();
+            let value = autostart::install(&borrowed).map_err(Error::Message)?;
+            println!("autostart installed:");
+            println!("  HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+            println!("  {value}");
+        }
+        "remove" => {
+            let removed = autostart::remove().map_err(Error::Message)?;
+            if removed {
+                println!("autostart removed");
+            } else {
+                println!("autostart was not set");
+            }
+        }
+        "status" => match autostart::status().map_err(Error::Message)? {
+            Some(value) => println!("autostart: {value}"),
+            None => println!("autostart: not set"),
+        },
+        other => {
+            return Err(Error::Message(format!(
+                "unknown autostart command: {other}. Use install, remove or status"
+            )));
+        }
+    }
+
     Ok(())
 }
 

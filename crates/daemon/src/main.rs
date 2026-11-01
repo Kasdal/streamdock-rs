@@ -9,6 +9,7 @@
 //! The keys keep working when no window is open, because there is no window.
 
 mod single;
+mod tray;
 
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,6 +36,11 @@ fn log(message: impl AsRef<str>) {
 }
 
 /// Ask the loop to stop on Ctrl+C and on console close.
+/// Ask the loop to stop. The tray menu and Ctrl+C both use this.
+fn request_shutdown() {
+    SHUTDOWN.store(true, Ordering::SeqCst);
+}
+
 unsafe extern "system" fn on_ctrl(_signal: u32) -> i32 {
     SHUTDOWN.store(true, Ordering::SeqCst);
     1
@@ -59,7 +65,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!("streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank] [--verbose] [--no-ui]");
+        println!("streamdockd [--profile NAME] [--dir PATH] [--seconds N] [--no-blank] [--verbose] [--no-ui] [--no-tray]");
         println!();
         println!("  --profile NAME  profile to load, default Default");
         println!("  --dir PATH      profile folder, default %LOCALAPPDATA%\\StreamDock\\profiles");
@@ -67,6 +73,7 @@ fn main() -> ExitCode {
         println!("  --no-blank      keep the keys on exit instead of clearing them");
         println!("  --verbose       log every input report");
         println!("  --no-ui         do not start the editor server");
+        println!("  --no-tray       do not show the tray icon");
         return ExitCode::SUCCESS;
     }
 
@@ -113,7 +120,9 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     // touches the device, so a save cannot race with a paint.
     let shared = ipc::Shared::new(ipc::State::new(profile.clone(), page));
     let (commands, incoming) = mpsc::channel::<ipc::Command>();
+    let mut tray = None;
     if !args.iter().any(|a| a == "--no-ui") {
+        let tray_sender = commands.clone();
         match ipc::Server::start(Arc::clone(&shared), commands, store.dir().to_path_buf()) {
             Ok(server) => {
                 match server.write_runtime_file() {
@@ -121,6 +130,15 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) => log(format!("cannot write the runtime file: {e}")),
                 }
                 log(format!("editor {}", server.url()));
+                if !args.iter().any(|a| a == "--no-tray") {
+                    match tray::Tray::spawn(server.url(), tray_sender, request_shutdown) {
+                        Ok(icon) => {
+                            tray = Some(icon);
+                            log("tray icon ready");
+                        }
+                        Err(e) => log(format!("cannot create the tray icon: {e}")),
+                    }
+                }
             }
             Err(e) => log(format!("cannot start the editor server: {e}")),
         }
@@ -230,6 +248,8 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             SessionPoll::Idle => {}
         }
     }
+
+    drop(tray);
 
     if blank_on_exit {
         match session.with_device(|dev| dev.blank()) {

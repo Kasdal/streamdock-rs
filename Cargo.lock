@@ -245,6 +245,7 @@ dependencies = [
  "streamdock-ipc",
  "streamdock-render",
  "streamdock-store",
+ "windows-sys",
 ]
 
 [[package]]

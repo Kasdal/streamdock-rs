@@ -18,7 +18,8 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Daemon with actions | verified on hardware: page switch, repaint |
 | Browser editor | verified on hardware: edit a key, panel updates |
 | Drag and drop | verified on hardware: drop a PNG on a key |
-| Unit tests | 118 tests, no device needed |
+| Tray icon and autostart | verified on hardware: menu, quit, Run key |
+| Unit tests | 120 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -140,6 +141,7 @@ streamdockd --profile Demo
 | `--no-blank` | keep the keys on exit |
 | `--verbose` | log every input report |
 | `--no-ui` | do not start the editor server |
+| `--no-tray` | do not show the tray icon |
 
 The daemon prints the editor URL at start. `streamdock ui` opens it in the
 default browser. The port is random, and the token is in
@@ -155,6 +157,19 @@ the `assets` folder next to the profile, so the profile stays portable.
 
 The socket binds to `127.0.0.1` only. Every request needs the token.
 A second daemon exits, because a named mutex guards the device.
+
+The tray icon has three items:
+
+| Item | Effect |
+| --- | --- |
+| Open editor | Opens the editor page in the default browser |
+| Reload profile | Reads the profile file again and repaints |
+| Quit | Stops the daemon, clears the keys, removes the icon |
+
+`streamdock autostart install` adds the daemon to the per-user Run key, so it
+starts at logon. No administrator rights are needed.
+`streamdock autostart remove` deletes the value.
+`streamdock autostart status` shows the current value.
 
 The daemon does these steps:
 
@@ -242,6 +257,7 @@ streamdock.exe bench --count 30
 streamdock.exe profile <list|init|demo|show|validate> [--name N]
 streamdock.exe preview [--name N] [--page N] [--out FILE]
 streamdock.exe ui
+streamdock.exe autostart <install|remove|status> [--profile N]
 streamdock.exe send --hex 4352540000444953 --i-understand
 ```
 
@@ -266,6 +282,7 @@ streamdock.exe send --hex 4352540000444953 --i-understand
   writes a two page profile for a daemon test.
 * `preview` writes a picture of one page as a JPEG, without the panel.
 * `ui` opens the editor of the running daemon in the default browser.
+* `autostart` adds or removes the daemon in the per-user Run key.
 * `send` writes one raw payload. It refuses to write without `--i-understand`.
 
 ## Limits

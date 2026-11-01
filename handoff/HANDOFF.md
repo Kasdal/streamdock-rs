@@ -194,7 +194,9 @@ orientation, no mirroring.
 | `crates/ipc/src/http.rs` | Bounded HTTP request parse and response write |
 | `crates/ipc/src/ui.html` | The editor page |
 | `crates/daemon/src/main.rs` | `streamdockd`: paint, poll, act, repaint, serve the editor |
+| `crates/daemon/src/tray.rs` | Tray icon and its menu on its own thread |
 | `crates/daemon/src/single.rs` | Named mutex, one daemon per machine |
+| `crates/cli/src/autostart.rs` | Per-user Run key install and remove |
 | `crates/cli/src/main.rs` | Command line and command handlers |
 
 Commands: `list`, `desc`, `init`, `watch`, `capture`, `brightness`, `led`,
@@ -706,7 +708,7 @@ Open work for the editor:
 5. Add the strip key names to the grid labels.
 6. Keep the last known state when the daemon is offline, instead of a blank
    grid.
-7. Add the tray icon and autostart to the daemon.
+7. ~~Add the tray icon and autostart to the daemon.~~ Closed in section 23.
 8. Wrap the page in Tauri when the MSVC toolchain is available.
 
 ## 22. Session 2 part 4: real tiles and drag and drop
@@ -736,4 +738,45 @@ Design notes:
    with a clear message.
 7. The editor fetches a tile again only when the profile, the page or the
    connection state changes. A poll does not reload 18 images.
+
+## 23. Session 2 part 5: tray icon, autostart and a clean exit
+
+Date: 2026-11-01. The daemon can now run at logon with no console and no
+window, and the user can stop it from the tray.
+
+| Test | Result |
+| --- | --- |
+| Tray icon | Visible, tooltip `Stream Dock` |
+| Tray menu | Open editor, Reload profile, Quit |
+| Open editor | Opened the page in the default browser |
+| Quit | Daemon stopped, keys cleared, icon removed |
+| `autostart status` | `not set` before install |
+| `autostart install` | Wrote the Run value |
+| `autostart status` | Showed the quoted path |
+| `autostart remove` | Deleted the value, status back to `not set` |
+
+Design notes:
+
+1. The icon lives on its own thread with a hidden window and a message loop.
+   The device loop keeps its single owner.
+2. The menu is a popup menu with `TPM_RETURNCMD`, so no `WM_COMMAND` handler is
+   needed.
+3. Quit sets the same shutdown flag as Ctrl+C. The loop then drops the tray,
+   which posts `WM_CLOSE`, the tray thread removes the icon and joins, and the
+   keys are cleared.
+4. The icon uses `IDI_APPLICATION` for now. A product build needs its own icon
+   resource.
+5. Autostart uses `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. The
+   value is the quoted daemon path, plus `--profile NAME` when given.
+6. The command finds `streamdockd.exe` next to `streamdock.exe`, so both must
+   ship in one folder.
+
+Open work that this session added:
+
+1. A product icon and a signed binary.
+2. A tray item for autostart, so the user does not need the CLI.
+3. A single instance check before the tray starts, so a second start does not
+   flash an icon.
+4. Hide the console window in a release build. The current binary is a console
+   program.
 
