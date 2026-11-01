@@ -357,8 +357,99 @@ fn route(context: &Context, request: &Request) -> Response {
             }
             store_asset(context, request)
         }
+        ("GET", "/api/icons") => {
+            if !api_token_ok(context, request) {
+                return Response::message(401, "missing or wrong token");
+            }
+            icon_list(context)
+        }
+        ("POST", "/api/icon") => {
+            if !api_token_ok(context, request) {
+                return Response::message(401, "missing or wrong token");
+            }
+            save_icon(context, request)
+        }
         _ => Response::message(404, "no such path"),
     }
+}
+
+/// Bundled icons plus the files in the profile `icons` folder.
+fn icon_list(context: &Context) -> Response {
+    let mut names: std::collections::BTreeSet<String> = streamdock_render::icons::NAMES
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+
+    if let Ok(entries) = std::fs::read_dir(context.base.join("icons")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_svg = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("svg"))
+                .unwrap_or(false);
+            if !is_svg {
+                continue;
+            }
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                names.insert(stem.to_ascii_lowercase());
+            }
+        }
+    }
+
+    let list: Vec<String> = names.into_iter().collect();
+    Response::json(200, serde_json::json!({ "icons": list }).to_string())
+}
+
+/// Store one SVG in the profile `icons` folder under a safe name.
+fn save_icon(context: &Context, request: &Request) -> Response {
+    let Some(name) = request.query_value("name").and_then(sanitize_icon_name) else {
+        return Response::message(
+            400,
+            "icon name must be 1 to 32 letters, digits or dashes",
+        );
+    };
+
+    if request.body.len() > MAX_ASSET_BYTES {
+        return Response::message(
+            413,
+            format!(
+                "icon is {} bytes, the limit is {MAX_ASSET_BYTES}",
+                request.body.len()
+            ),
+        );
+    }
+
+    if let Err(message) = streamdock_render::svg::validate_svg(&request.body) {
+        return Response::message(400, message);
+    }
+
+    let folder = context.base.join("icons");
+    if let Err(e) = std::fs::create_dir_all(&folder) {
+        return Response::message(500, format!("cannot create {}: {e}", folder.display()));
+    }
+
+    let path = folder.join(format!("{name}.svg"));
+    if let Err(e) = std::fs::write(&path, &request.body) {
+        return Response::message(500, format!("cannot write {}: {e}", path.display()));
+    }
+
+    Response::json(200, serde_json::json!({ "name": name }).to_string())
+}
+
+/// A safe icon name: lowercase letters, digits and dashes.
+fn sanitize_icon_name(name: &str) -> Option<String> {
+    let lower = name.trim().to_ascii_lowercase();
+    if lower.is_empty() || lower.len() > 32 {
+        return None;
+    }
+    if !lower
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return None;
+    }
+    Some(lower)
 }
 
 /// Draw one key tile as a JPEG for the editor grid.
@@ -381,7 +472,14 @@ fn tile_image(context: &Context, request: &Request) -> Response {
     };
 
     let scale = render::scale_for(page, key);
-    let tile = match render::compose_in(page.key(key), model::key_size(key), scale, &context.base) {
+    let palette = render::palette(&state.profile.theme).unwrap_or_default();
+    let tile = match render::compose_in_themed(
+        page.key(key),
+        model::key_size(key),
+        scale,
+        &context.base,
+        &palette,
+    ) {
         Ok(tile) => tile,
         Err(message) => return Response::message(400, message),
     };
@@ -585,6 +683,17 @@ mod tests {
         )
     }
 
+    fn context_with_base(base: PathBuf) -> Context {
+        let state = State::new(Profile::starter(), 0);
+        let (commands, _receiver) = channel();
+        Context {
+            shared: Shared::new(state),
+            commands,
+            token: "abc123".to_string(),
+            base,
+        }
+    }
+
     #[test]
     fn the_page_needs_the_token_in_the_query() {
         let context = context();
@@ -748,5 +857,87 @@ mod tests {
 
         let response = handle.join().expect("thread");
         assert_eq!(response.status, 200);
+    }
+
+    #[test]
+    fn the_icon_list_starts_with_the_bundled_set() {
+        let context = context();
+        let mut request = request("GET", "/api/icons");
+        request
+            .headers
+            .push(("x-token".to_string(), "abc123".to_string()));
+        let response = route(&context, &request);
+        assert_eq!(response.status, 200);
+        let text = String::from_utf8(response.body).expect("utf8");
+        assert!(text.contains("\"mic\""));
+        assert!(text.contains("\"play\""));
+    }
+
+    #[test]
+    fn a_bad_icon_name_is_rejected() {
+        let context = context();
+        let mut request = request("POST", "/api/icon");
+        request
+            .headers
+            .push(("x-token".to_string(), "abc123".to_string()));
+        request.body = br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#.to_vec();
+
+        assert_eq!(route(&context, &request).status, 400);
+        request.query.push(("name".to_string(), "../evil".into()));
+        assert_eq!(route(&context, &request).status, 400);
+        request.query.clear();
+        request.query.push(("name".to_string(), "a b".into()));
+        assert_eq!(route(&context, &request).status, 400);
+    }
+
+    #[test]
+    fn a_bad_svg_icon_is_rejected() {
+        let context = context();
+        let mut request = request("POST", "/api/icon");
+        request
+            .headers
+            .push(("x-token".to_string(), "abc123".to_string()));
+        request.query.push(("name".to_string(), "star".into()));
+        request.body = b"not an svg".to_vec();
+        assert_eq!(route(&context, &request).status, 400);
+    }
+
+    #[test]
+    fn an_icon_is_saved_under_the_icons_folder() {
+        let dir = std::env::temp_dir().join(format!(
+            "streamdock-ipc-icon-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let context = context_with_base(dir.clone());
+
+        let mut save = request("POST", "/api/icon");
+        save.headers
+            .push(("x-token".to_string(), "abc123".to_string()));
+        save.query.push(("name".to_string(), "Star".into()));
+        save.body = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#fff"/></svg>"##.to_vec();
+
+        let response = route(&context, &save);
+        assert_eq!(response.status, 200);
+        let path = dir.join("icons").join("star.svg");
+        assert!(path.exists(), "{} is missing", path.display());
+
+        // The name is lowercase, and the list contains it.
+        let mut list = request("GET", "/api/icons");
+        list.headers
+            .push(("x-token".to_string(), "abc123".to_string()));
+        let text = String::from_utf8(route(&context, &list).body).expect("utf8");
+        assert!(text.contains("\"star\""));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn icon_names_are_sanitized() {
+        assert_eq!(sanitize_icon_name("Star").as_deref(), Some("star"));
+        assert_eq!(sanitize_icon_name("mic-off").as_deref(), Some("mic-off"));
+        assert_eq!(sanitize_icon_name(""), None);
+        assert_eq!(sanitize_icon_name("a/b"), None);
+        assert_eq!(sanitize_icon_name(&"x".repeat(40)), None);
     }
 }

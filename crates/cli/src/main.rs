@@ -43,7 +43,7 @@ fn usage() {
     eprintln!("  pattern [--seconds N]");
     eprintln!("  probe --test strip-size|strip-span|image-limit");
     eprintln!("  bench [--count N] [--key 1..18]");
-    eprintln!("  profile <list|init|demo|show|validate> [--name N] [--dir PATH]");
+    eprintln!("  profile <list|init|demo|show|validate|export|import> [--name N] [--dir PATH]");
     eprintln!("  preview [--name N] [--page N] [--out FILE] [--dir PATH]");
     eprintln!("  ui");
     eprintln!("  autostart <install|remove|status> [--profile N]");
@@ -648,6 +648,27 @@ fn profile_cmd(args: &[String]) -> Result<()> {
             println!("wrote {}", store.path_for(&name).map_err(map)?.display());
             println!("run: streamdockd --profile {name}");
         }
+        "export" => {
+            let name = profile_name(args, "Default");
+            let out = arg_value(args, "--out").unwrap_or_else(|| format!("{name}.zip"));
+            let count = store
+                .export(&name, std::path::Path::new(&out))
+                .map_err(map)?;
+            println!("exported {name} to {out} with {count} file(s)");
+        }
+        "import" => {
+            let file = arg_value(args, "--file")
+                .ok_or_else(|| Error::Message("import needs --file PATH".into()))?;
+            let new_name = arg_value(args, "--name");
+            let profile = store
+                .import(std::path::Path::new(&file), new_name.as_deref())
+                .map_err(map)?;
+            println!(
+                "imported {} with {} page(s)",
+                profile.name,
+                profile.pages.len()
+            );
+        }
         "show" | "validate" => {
             let name = profile_name(args, "Default");
             let profile = store.load(&name).map_err(map)?;
@@ -708,7 +729,9 @@ fn preview(args: &[String]) -> Result<()> {
     }
     let page = &profile.pages[page_number - 1];
 
-    let sheet = streamdock_render::contact_sheet_in(page, store.dir()).map_err(Error::Message)?;
+    let palette = streamdock_render::palette(&profile.theme).unwrap_or_default();
+    let sheet = streamdock_render::contact_sheet_in_themed(page, store.dir(), &palette)
+        .map_err(Error::Message)?;
     let jpeg = image::encode_quality(&sheet, 90).map_err(Error::Message)?;
 
     let out = arg_value(args, "--out").unwrap_or_else(|| "profile-preview.jpg".to_string());

@@ -26,6 +26,7 @@ use streamdock_actions::Effect;
 use streamdock_core::model;
 use streamdock_core::proto::KeyEvent;
 use streamdock_ipc as ipc;
+use streamdock_render as render;
 use streamdock_store::profile::Profile;
 use streamdock_store::Store;
 
@@ -397,8 +398,9 @@ fn handle_command(
 /// Queue every key of one page and start its animations.
 fn paint_page(panel: &Panel, painter: &mut Painter, profile: &Profile, page: usize) {
     let page_ref = &profile.pages[page];
+    let palette = render::palette(&profile.theme).unwrap_or_default();
     let mut warnings = Vec::new();
-    let queued = painter.paint(panel, page_ref, &mut |message| warnings.push(message));
+    let queued = painter.paint(panel, page_ref, &palette, &mut |message| warnings.push(message));
 
     for warning in warnings {
         log(warning);

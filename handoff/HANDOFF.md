@@ -188,10 +188,12 @@ orientation, no mirroring.
 | `crates/core/src/session.rs` | Reconnect and hot plug over `Device` |
 | `crates/core/src/error.rs` | Error type |
 | `crates/store/src/profile.rs` | Profile, page, key, image and action model, validation |
-| `crates/store/src/file_store.rs` | One JSON file per profile, atomic save |
+| `crates/store/src/file_store.rs` | One JSON file per profile, atomic save, zip export and import |
 | `crates/render/src/lib.rs` | Key tiles from a profile, contact sheet |
 | `crates/render/src/text.rs` | TrueType labels with wrap and shrink, bitmap fallback |
 | `crates/render/src/svg.rs` | SVG rendering through resvg |
+| `crates/render/src/icons.rs` | Bundled icon set |
+| `crates/render/assets` | Roboto font (Apache 2.0) and the icon SVGs |
 | `crates/actions/src/lib.rs` | Hotkey, text, media, launch, multi, page actions |
 | `crates/ipc/src/lib.rs` | Loopback HTTP server, token, shared state, commands |
 | `crates/ipc/src/http.rs` | Bounded HTTP request parse and response write |
@@ -511,7 +513,7 @@ Measured requirement: rotate by 270 degrees at the end, not at the start.
 | M2 (done without IPC) | Daemon, profile store, action engine for hotkey, text, launch, multi | Keys act while the UI is closed |
 | M3 (part done) | Key grid, key editor, live preview in a browser page | A user builds a 15 key page without a CLI |
 | M3 | Tauri UI with grid, key editor, drag and drop, live preview | A user builds a 15 key page without a CLI |
-| M4 (part done) | Text, images, SVG, icons and GIF animation are in. Themes, import and export are open. | A page with an icon and one animation runs |
+| M4 (done) | Text, images, SVG, icons, GIF, phases, themes, zip export and import | A page with icons and one animation runs |
 | M5 | Per application profiles, HTTP actions, plugin host | A profile switches when the user changes application |
 | M6 | Signing, installer, update check, docs, privacy text | A stranger can install and use it |
 
@@ -903,4 +905,45 @@ Open work that this session added:
 2. Let the editor upload an icon into `icons/` with a name.
 3. Add a "fit" choice for SVG (contain or cover).
 4. Support SVG text. `usvg` needs a font database for it.
+
+## 27. Session 2 part 9: bundled font and icons, themes, zip import and export
+
+Date: 2026-11-01. The renderer now ships its own font and icons, a profile can
+carry a theme, and a profile moves between machines as one zip file.
+
+| Test | Result |
+| --- | --- |
+| Bundled font | Roboto labels on the panel |
+| Bundled icons | play, gear, check, volume, camera drawn on key 6 to 10 |
+| Profile icon | `icons/mic.svg` still wins over the bundled set |
+| Theme | Purple background and yellow text from the profile |
+| Editor theme pickers | Show the profile colours, a change repaints the panel |
+| Icon suggestions | The icon field lists the bundled names |
+| Icon upload | A named SVG lands in `<profiles>/icons/<name>.svg` |
+| Export | Zip holds the profile, the GIF and `icons/mic.svg` |
+| Import | The zip loads under a new name with its assets |
+
+Design notes:
+
+1. The font is `crates/render/assets/Roboto-Variable.ttf`, Apache 2.0. The
+   licence text is next to it and must ship with a release.
+2. `STREAMDOCK_FONT` still overrides the bundled font, and the system fonts are
+   the last fallback.
+3. The icon lookup order is: profile `icons/<name>.svg`, bundled icon, then
+   the name as text.
+4. `Theme` is part of the profile. It sets the background and the text colour
+   for keys that do not set their own.
+5. `Store::export` writes `<name>.json` plus every relative path that the
+   profile refers to.
+6. `Store::import` writes only entries under `assets/` and `icons/`, and it
+   rejects a parent directory step, so an archive cannot escape the folder.
+7. The editor uploads an icon with `POST /api/icon?name=`, and lists names
+   with `GET /api/icons`.
+
+Open work that this session added:
+
+1. Import and export buttons in the editor, not only in the CLI.
+2. A theme editor for named themes, not only two colours.
+3. Bundle a few more icons, and a small preview of each in the editor.
+4. Check the Apache 2.0 notice in the installer and the about box.
 

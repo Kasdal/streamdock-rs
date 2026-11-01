@@ -24,7 +24,10 @@ It needs no C compiler, no vendor driver and no vendor software.
 | Real text font | verified on hardware: TrueType labels at a readable size |
 | SVG icons | verified on hardware: microphone icon on a key |
 | Animation phases | verified on hardware: two keys run out of step |
-| Unit tests | 142 tests, no device needed |
+| Bundled font and icons | verified on hardware: Roboto labels, built-in icon set |
+| Themes | verified on hardware: purple and yellow profile theme |
+| Profile export and import | verified: zip with the profile, assets and icons |
+| Unit tests | 152 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -161,6 +164,10 @@ Drag a JPEG, PNG, GIF or SVG file onto a key to set its image. A GIF becomes
 an animation. The file is copied into the `assets` folder next to the profile,
 so the profile stays portable.
 
+The header holds the two theme colours and the brightness slider. For an icon
+key, type a name, choose an SVG file and the editor stores it in `icons/`.
+The name field suggests the bundled icon names.
+
 The Undo button restores the profile from before the last save. Ctrl+Z does
 the same when the focus is not in a text field.
 
@@ -220,6 +227,7 @@ One profile is one JSON file. A page holds keys by number.
   "version": 1,
   "name": "Default",
   "device": { "pid": "0x3010", "layout": "akp153e" },
+  "theme": { "background": "#202020", "foreground": "#f0f0f0" },
   "pages": [
     {
       "name": "Main",
@@ -240,8 +248,17 @@ One profile is one JSON file. A page holds keys by number.
 
 Image kinds: `color`, `text`, `file`, `svg`, `animation`, `icon`.
 
-An `icon` looks for `<profile folder>/icons/<name>.svg`. Without that file,
-the name is drawn as text.
+The theme sets the background and the text colour for keys that do not set
+their own colour. The editor has two colour pickers for it.
+
+A `file` path may be absolute, or relative to the profile folder. The editor
+stores a dropped file as `assets/<name>-<hash>.<ext>`. JPEG, PNG, GIF and SVG
+are accepted.
+
+An `icon` uses `<profile folder>/icons/<name>.svg` when that file exists, then
+a bundled icon, then the name as text. Bundled names: `camera`, `check`,
+`cross`, `folder`, `gear`, `home`, `mic`, `mic-off`, `minus`, `mute`, `next`,
+`pause`, `play`, `plus`, `prev`, `refresh`, `volume`, `volume-down`.
 
 An `animation` is a GIF. Each frame is fitted to the key, rotated and encoded
 once. The daemon keeps at most 60 frames per animation and samples a longer
@@ -252,9 +269,9 @@ A `file` path may be absolute, or relative to the profile folder. The editor
 stores a dropped file as `assets/<name>-<hash>.<ext>`. JPEG, PNG, GIF and SVG
 are accepted.
 
-Text uses a system TrueType font and wraps to fit the key. Set
-`STREAMDOCK_FONT` to a font file to override it. The 5x7 bitmap font is the
-fallback when no font is found.
+Text uses the bundled Roboto font (Apache 2.0), so every installation looks the
+same. Set `STREAMDOCK_FONT` to a font file to override it. The 5x7 bitmap font
+is the fallback when no font can be loaded.
 
 Action types: `hotkey`, `text`, `media`, `launch`, `multi`, `page`,
 `brightness`, `command`. A `command` action runs a program, so a profile with
@@ -289,7 +306,9 @@ streamdock.exe image --key 1 --file photo.jpg [--fit crop|stretch|none] [--rotat
 streamdock.exe pattern
 streamdock.exe probe --test strip-size|strip-span|image-limit
 streamdock.exe bench --count 30
-streamdock.exe profile <list|init|demo|show|validate> [--name N]
+streamdock.exe profile <list|init|demo|show|validate|export|import> [--name N]
+streamdock.exe profile export --name Demo --out Demo.zip
+streamdock.exe profile import --file Demo.zip --name Copy
 streamdock.exe preview [--name N] [--page N] [--out FILE]
 streamdock.exe ui
 streamdock.exe autostart <install|remove|status> [--profile N]
@@ -314,7 +333,9 @@ streamdock.exe send --hex 4352540000444953 --i-understand
 * `probe` answers one hardware question. See `handoff/HANDOFF.md`.
 * `bench` measures the image transfer rate.
 * `profile` lists, creates, shows and validates profiles. `profile demo`
-  writes a two page profile for a daemon test.
+  writes a two page profile for a daemon test. `profile export` writes one
+  zip with the profile, its assets and its icons. `profile import` reads it
+  back, under a new name if you ask.
 * `preview` writes a picture of one page as a JPEG, without the panel.
 * `ui` opens the editor of the running daemon in the default browser.
 * `autostart` adds or removes the daemon in the per-user Run key.
@@ -331,8 +352,8 @@ Notepad, `ctrl+a` selected it, and `notepad.exe` opened from a key.
 A `command` action runs a program. A profile that holds one is user data, so
 the daemon does not ask for confirmation yet. Do this before a release.
 
-Text uses a system font, so no font file is redistributed. A product build
-must bundle a font with a suitable licence and set `STREAMDOCK_FONT`.
+The renderer bundles the Roboto font under the Apache 2.0 licence. The licence
+text is in `crates/render/assets/Roboto-OFL.txt`. Keep it with a release.
 
 The vendor application was never installed or executed.
 The installer payload is not decompressed.

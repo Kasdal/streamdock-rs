@@ -8,4 +8,5 @@ description = "Profile model and JSON store for Stream Dock"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+zip = "2"
 streamdock-core = { path = "../core" }

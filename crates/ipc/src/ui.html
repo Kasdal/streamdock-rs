@@ -119,8 +119,12 @@
   <span id="status-text">not connected</span>
   <span class="grow"></span>
   <span class="brightness">
+    <label for="theme-bg" style="margin:0">theme bg</label>
+    <input id="theme-bg" type="color" value="#202020" style="width:34px;height:24px">
+    <label for="theme-fg" style="margin:0">text</label>
+    <input id="theme-fg" type="color" value="#f0f0f0" style="width:34px;height:24px">
     <label for="brightness" style="margin:0">brightness</label>
-    <input id="brightness" type="range" min="0" max="100" value="60" style="width:140px">
+    <input id="brightness" type="range" min="0" max="100" value="60" style="width:120px">
     <span id="brightness-value">60</span>
   </span>
   <button id="undo" disabled>Undo</button>
@@ -176,7 +180,11 @@
     </div>
 
     <div id="f-icon-row" class="hidden">
-      <label>Icon name <input id="f-icon" type="text" placeholder="mic-off"></label>
+      <label>Icon name <input id="f-icon" list="icon-list" placeholder="mic"></label>
+      <datalist id="icon-list"></datalist>
+      <label>Upload an SVG as this name
+        <input id="f-icon-file" type="file" accept=".svg,image/svg+xml">
+      </label>
     </div>
 
     <div id="f-color-row" class="hidden">
@@ -560,6 +568,7 @@ async function refresh() {
       tileVersion = Date.now();
       drawTabs();
       drawGrid();
+      showTheme();
       if (pageChanged) fillEditor();
     }
   } catch (e) {
@@ -574,6 +583,27 @@ async function setBrightness(value) {
     state = await api("/api/brightness", { method: "POST", body: JSON.stringify({ value: Number(value) }) });
   } catch (e) {
     message(e.message, "bad");
+  }
+}
+
+/// Show the profile theme in the header colour pickers.
+function showTheme() {
+  if (!state) return;
+  const theme = state.profile.theme || {};
+  $("theme-bg").value = colour(theme.background, "#202020");
+  $("theme-fg").value = colour(theme.foreground, "#f0f0f0");
+}
+
+async function applyTheme() {
+  try {
+    const profile = copyProfile();
+    profile.theme = {
+      background: $("theme-bg").value,
+      foreground: $("theme-fg").value,
+    };
+    await saveProfile(profile, "theme saved", state.rev);
+  } catch (e) {
+    reportError(e);
   }
 }
 
@@ -626,6 +656,45 @@ async function reloadProfile() {
   } catch (e) { message(e.message, "bad"); }
 }
 
+/// Fill the icon name suggestions.
+async function loadIcons() {
+  try {
+    const data = await api("/api/icons");
+    const list = $("icon-list");
+    list.innerHTML = "";
+    for (const name of data.icons) {
+      const option = document.createElement("option");
+      option.value = name;
+      list.appendChild(option);
+    }
+  } catch (e) {
+    // The list is a convenience. A failure must not block editing.
+  }
+}
+
+/// Store an SVG in the profile icons folder under the name in the field.
+async function uploadIcon(file) {
+  const name = ($("f-icon").value || file.name.replace(/\.svg$/i, "")).trim();
+  if (!name) {
+    message("type an icon name first, then choose the file", "bad");
+    return;
+  }
+  try {
+    message("uploading " + file.name + "...");
+    const bytes = await file.arrayBuffer();
+    await api("/api/icon?name=" + encodeURIComponent(name), {
+      method: "POST",
+      headers: { "Content-Type": "image/svg+xml" },
+      body: bytes,
+    });
+    $("f-icon").value = name.toLowerCase();
+    await loadIcons();
+    message("icon " + name.toLowerCase() + " saved. Press Apply key to use it.", "ok");
+  } catch (e) {
+    message(e.message, "bad");
+  }
+}
+
 $("f-kind").addEventListener("change", updateKindRows);
 $("apply").addEventListener("click", applyKey);
 $("clear").addEventListener("click", clearKey);
@@ -635,6 +704,13 @@ $("page-rename").addEventListener("click", renamePage);
 $("page-delete").addEventListener("click", deletePage);
 $("reload").addEventListener("click", reloadProfile);
 $("brightness").addEventListener("change", (event) => setBrightness(event.target.value));
+$("theme-bg").addEventListener("change", applyTheme);
+$("theme-fg").addEventListener("change", applyTheme);
+$("f-icon-file").addEventListener("change", (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (file) uploadIcon(file);
+  event.target.value = "";
+});
 
 document.addEventListener("keydown", (event) => {
   if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
@@ -650,11 +726,13 @@ document.addEventListener("keydown", (event) => {
     drawTabs();
     drawGrid();
     fillEditor();
+    showTheme();
     $("brightness").value = state.brightness === null ? 60 : state.brightness;
     $("brightness-value").textContent = $("brightness").value;
   } catch (e) {
     message("cannot reach the daemon: " + e.message, "bad");
   }
+  loadIcons();
   setInterval(refresh, 1500);
 })();
 </script>

@@ -21,6 +21,9 @@ pub const MARGIN_PX: f32 = 5.0;
 
 static FONT: OnceLock<Option<FontArc>> = OnceLock::new();
 
+/// Font that ships with the renderer. Roboto, Apache 2.0. See `assets`.
+const BUNDLED_FONT: &[u8] = include_bytes!("../assets/Roboto-Variable.ttf");
+
 /// Override the font with this environment variable.
 pub const FONT_ENV: &str = "STREAMDOCK_FONT";
 
@@ -36,6 +39,11 @@ fn load_font() -> Option<FontArc> {
                 return Some(font);
             }
         }
+    }
+
+    // The bundled font keeps every installation the same.
+    if let Ok(font) = FontArc::try_from_slice(BUNDLED_FONT) {
+        return Some(font);
     }
 
     let windows = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());

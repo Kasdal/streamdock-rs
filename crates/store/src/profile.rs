@@ -48,9 +48,30 @@ pub struct Profile {
     /// Device that the profile targets.
     #[serde(default)]
     pub device: DeviceSpec,
+    /// Colour scheme for keys without an explicit colour.
+    #[serde(default)]
+    pub theme: Theme,
     /// Pages in display order.
     #[serde(default)]
     pub pages: Vec<Page>,
+}
+
+/// Colours that a key uses when its image does not set one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Theme {
+    #[serde(default = "default_background")]
+    pub background: String,
+    #[serde(default = "default_foreground")]
+    pub foreground: String,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            background: default_background(),
+            foreground: default_foreground(),
+        }
+    }
 }
 
 /// Device binding of a profile.
@@ -249,6 +270,7 @@ impl Profile {
             version: VERSION,
             name: name.to_string(),
             device: DeviceSpec::default(),
+            theme: Theme::default(),
             pages: vec![Page::new("Main")],
         }
     }
@@ -270,6 +292,7 @@ impl Profile {
             version: VERSION,
             name: "Default".to_string(),
             device: DeviceSpec::default(),
+            theme: Theme::default(),
             pages: vec![page],
         }
     }
@@ -331,6 +354,7 @@ impl Profile {
             version: VERSION,
             name: "Demo".to_string(),
             device: DeviceSpec::default(),
+            theme: Theme::default(),
             pages: vec![main, second],
         }
     }
@@ -343,6 +367,9 @@ impl Profile {
         if self.pages.is_empty() {
             return Err("profile has no pages".into());
         }
+
+        parse_color(&self.theme.background)?;
+        parse_color(&self.theme.foreground)?;
 
         let mut seen = std::collections::BTreeSet::new();
         for page in &self.pages {
@@ -550,6 +577,7 @@ mod tests {
             version: VERSION,
             name: "Default".into(),
             device: DeviceSpec::default(),
+            theme: Theme::default(),
             pages: vec![page, Page::new("Media")],
         }
     }

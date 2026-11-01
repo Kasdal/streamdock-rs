@@ -14,8 +14,9 @@ use std::sync::Arc;
 
 use streamdock_core::image::{self, Rgb};
 use streamdock_core::{animation, model, proto, tile};
-use streamdock_store::profile::{parse_color, ImageSpec, Key, Page};
+use streamdock_store::profile::{parse_color, ImageSpec, Key, Page, Theme};
 
+pub mod icons;
 pub mod svg;
 pub mod text;
 
@@ -24,6 +25,30 @@ pub const BACKGROUND: [u8; 3] = [32, 32, 36];
 
 /// Default tile text colour.
 pub const FOREGROUND: [u8; 3] = [240, 240, 240];
+
+/// Colours used when a key does not set its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Palette {
+    pub background: [u8; 3],
+    pub foreground: [u8; 3],
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        Self {
+            background: BACKGROUND,
+            foreground: FOREGROUND,
+        }
+    }
+}
+
+/// Build a palette from a profile theme.
+pub fn palette(theme: &Theme) -> Result<Palette, String> {
+    Ok(Palette {
+        background: parse_color(&theme.background)?,
+        foreground: parse_color(&theme.foreground)?,
+    })
+}
 
 /// Largest text size for a label, as a fraction of the key side.
 pub const MAX_LABEL_FRACTION: f32 = 0.42;
@@ -109,10 +134,21 @@ pub fn compose_in(
     size_px: usize,
     base: &Path,
 ) -> Result<Rgb, String> {
+    compose_in_themed(config, size, size_px, base, &Palette::default())
+}
+
+/// Compose the tile for one key with a palette from the profile theme.
+pub fn compose_in_themed(
+    config: Option<&Key>,
+    size: (u16, u16),
+    size_px: usize,
+    base: &Path,
+    palette: &Palette,
+) -> Result<Rgb, String> {
     let (width, height) = size;
 
     let Some(key) = config else {
-        return Ok(tile::solid_tile(BACKGROUND, size));
+        return Ok(tile::solid_tile(palette.background, size));
     };
 
     if let Some(spec) = &key.image {
@@ -163,22 +199,30 @@ pub fn compose_in(
             }
             ImageSpec::Icon { name, background } => {
                 let bg = parse_color(background)?;
-                // An icon file wins. Without one, the name is drawn, so a
-                // profile still shows something.
+                // A profile icon wins, then a bundled icon, then the name.
                 let icon = base.join("icons").join(format!("{name}.svg"));
                 match std::fs::read(&icon) {
                     Ok(bytes) => svg::render_svg(&bytes, size, bg),
-                    Err(_) => Ok(text::label_tile(name, size, bg, FOREGROUND, size_px)),
+                    Err(_) => match icons::bundled(name) {
+                        Some(text) => svg::render_svg(text.as_bytes(), size, bg),
+                        None => Ok(text::label_tile(name, size, bg, palette.foreground, size_px)),
+                    },
                 }
             }
         };
     }
 
     if let Some(label) = &key.label {
-        return Ok(text::label_tile(label, size, BACKGROUND, FOREGROUND, size_px));
+        return Ok(text::label_tile(
+            label,
+            size,
+            palette.background,
+            palette.foreground,
+            size_px,
+        ));
     }
 
-    Ok(tile::solid_tile(BACKGROUND, size))
+    Ok(tile::solid_tile(palette.background, size))
 }
 
 /// Compose, rotate and encode one key tile.
@@ -195,7 +239,18 @@ pub fn encode_in(
     size_px: usize,
     base: &Path,
 ) -> Result<Vec<u8>, String> {
-    let upright = compose_in(config, size, size_px, base)?;
+    encode_in_themed(config, size, size_px, base, &Palette::default())
+}
+
+/// Compose, rotate and encode one key tile with a profile palette.
+pub fn encode_in_themed(
+    config: Option<&Key>,
+    size: (u16, u16),
+    size_px: usize,
+    base: &Path,
+    palette: &Palette,
+) -> Result<Vec<u8>, String> {
+    let upright = compose_in_themed(config, size, size_px, base, palette)?;
     let rotated = image::rotate(&upright, model::ROTATION);
     image::encode_max(&rotated, proto::MAX_IMAGE_BYTES)
 }
@@ -207,7 +262,23 @@ pub fn encode_key(page: &Page, key: u8) -> Result<Vec<u8>, String> {
 
 /// Encode one key of a page, with a base folder for relative image paths.
 pub fn encode_key_in(page: &Page, key: u8, base: &Path) -> Result<Vec<u8>, String> {
-    encode_in(page.key(key), model::key_size(key), scale_for(page, key), base)
+    encode_key_in_themed(page, key, base, &Palette::default())
+}
+
+/// Encode one key of a page with a profile palette.
+pub fn encode_key_in_themed(
+    page: &Page,
+    key: u8,
+    base: &Path,
+    palette: &Palette,
+) -> Result<Vec<u8>, String> {
+    encode_in_themed(
+        page.key(key),
+        model::key_size(key),
+        scale_for(page, key),
+        base,
+        palette,
+    )
 }
 
 /// A ready to send animation: pre-encoded JPEG frames and their delays.
@@ -307,6 +378,15 @@ pub fn contact_sheet(page: &Page) -> Result<Rgb, String> {
 
 /// A picture of the whole panel for one page, with a base folder for images.
 pub fn contact_sheet_in(page: &Page, base: &Path) -> Result<Rgb, String> {
+    contact_sheet_in_themed(page, base, &Palette::default())
+}
+
+/// A picture of the whole panel for one page with a profile palette.
+pub fn contact_sheet_in_themed(
+    page: &Page,
+    base: &Path,
+    palette: &Palette,
+) -> Result<Rgb, String> {
     let cell = model::GRID_KEY_PIXELS as usize;
     let strip = model::STRIP_KEY_PIXELS as usize;
     let width = cell * model::COLUMNS as usize + strip;
@@ -320,7 +400,7 @@ pub fn contact_sheet_in(page: &Page, base: &Path) -> Result<Rgb, String> {
     for key in 1..=model::KEY_COUNT {
         let (x, y) = sheet_position(key);
         let size = model::key_size(key);
-        let tile = compose_in(page.key(key), size, scale_for(page, key), base)?;
+        let tile = compose_in_themed(page.key(key), size, scale_for(page, key), base, palette)?;
         blit(&mut data, width, &tile, x, y);
     }
 

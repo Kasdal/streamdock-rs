@@ -75,6 +75,7 @@ impl Painter {
         &mut self,
         panel: &Panel,
         page: &Page,
+        palette: &render::Palette,
         warn: &mut dyn FnMut(String),
     ) -> usize {
         self.running.clear();
@@ -109,7 +110,7 @@ impl Painter {
                 }
             }
 
-            if self.send_static(panel, page, key, size, warn) {
+            if self.send_static(panel, page, key, size, palette, warn) {
                 queued += 1;
             }
         }
@@ -158,9 +159,10 @@ impl Painter {
         page: &Page,
         key: u8,
         size: (u16, u16),
+        palette: &render::Palette,
         warn: &mut dyn FnMut(String),
     ) -> bool {
-        match render::encode_key_in(page, key, &self.base) {
+        match render::encode_key_in_themed(page, key, &self.base, palette) {
             Ok(jpeg) => panel.key(key, Arc::from(jpeg)),
             Err(message) => {
                 warn(format!("key {key}: {message}"));

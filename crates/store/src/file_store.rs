@@ -4,10 +4,14 @@
 //! a temporary file and renames it over the old one, so a crash cannot leave a
 //! half written profile.
 
+use std::collections::BTreeSet;
 use std::fmt;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use crate::profile::{Profile, VERSION};
+use zip::write::SimpleFileOptions;
+
+use crate::profile::{ImageSpec, Profile, VERSION};
 
 /// Failure from the store.
 #[derive(Debug)]
@@ -170,12 +174,154 @@ impl Store {
             Err(e) => Err(e),
         }
     }
+
+    /// Write a profile and its assets into one zip file.
+    ///
+    /// Returns the number of asset files that were added. An asset that is
+    /// missing on disk is skipped, so an export never fails on a stale path.
+    pub fn export(&self, name: &str, out: &Path) -> Result<usize> {
+        let profile = self.load(name)?;
+        let text = serde_json::to_string_pretty(&profile)?;
+
+        let file = std::fs::File::create(out)?;
+        let mut zip = zip::ZipWriter::new(file);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+        zip.start_file(format!("{}.json", profile.name), options)
+            .map_err(zip_error)?;
+        zip.write_all(text.as_bytes())?;
+
+        let mut count = 0;
+        for path in asset_paths(&profile) {
+            let source = self.dir.join(&path);
+            if !source.is_file() {
+                continue;
+            }
+            zip.start_file(path.clone(), options).map_err(zip_error)?;
+            let bytes = std::fs::read(&source)?;
+            zip.write_all(&bytes)?;
+            count += 1;
+        }
+
+        zip.finish().map_err(zip_error)?;
+        Ok(count)
+    }
+
+    /// Read a profile and its assets from one zip file.
+    ///
+    /// Only entries under `assets/` and `icons/` are written, so an archive
+    /// cannot place a file somewhere else on the disk.
+    pub fn import(&self, archive: &Path, new_name: Option<&str>) -> Result<Profile> {
+        let file = std::fs::File::open(archive)?;
+        let mut zip = zip::ZipArchive::new(file).map_err(zip_error)?;
+
+        let mut profile_text: Option<String> = None;
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+
+        for index in 0..zip.len() {
+            let mut entry = zip.by_index(index).map_err(zip_error)?;
+            if !entry.is_file() {
+                continue;
+            }
+            let name = entry.name().to_string();
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes)?;
+
+            if profile_text.is_none() && name.ends_with(".json") {
+                profile_text = match String::from_utf8(bytes) {
+                    Ok(text) => Some(text),
+                    Err(_) => {
+                        return Err(StoreError::Invalid(
+                            "the profile JSON in the archive is not text".into(),
+                        ))
+                    }
+                };
+            } else if safe_relative(&name) {
+                files.push((name, bytes));
+            }
+        }
+
+        let text = profile_text
+            .ok_or_else(|| StoreError::Invalid("the archive has no profile JSON".into()))?;
+        let mut profile: Profile = serde_json::from_str(&text)?;
+        if let Some(name) = new_name {
+            profile.name = name.to_string();
+        }
+        profile.validate().map_err(StoreError::Invalid)?;
+
+        for (name, bytes) in files {
+            let path = self.dir.join(&name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&path, bytes)?;
+        }
+
+        self.save(&profile)?;
+        Ok(profile)
+    }
+}
+
+/// Every relative asset path that a profile refers to.
+fn asset_paths(profile: &Profile) -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+
+    for page in &profile.pages {
+        for key in page.keys.values() {
+            match &key.image {
+                Some(ImageSpec::File { path })
+                | Some(ImageSpec::Svg { path, .. })
+                | Some(ImageSpec::Animation { path, .. }) => {
+                    if safe_relative(path) {
+                        paths.insert(path.clone());
+                    }
+                }
+                Some(ImageSpec::Icon { name, .. }) => {
+                    let path = format!("icons/{name}.svg");
+                    if safe_relative(&path) {
+                        paths.insert(path);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    paths
+}
+
+/// True for `assets/...` or `icons/...` with no parent directory step.
+fn safe_relative(name: &str) -> bool {
+    let mut parts = Path::new(name).components();
+
+    let first = match parts.next() {
+        Some(std::path::Component::Normal(part)) => part.to_str().unwrap_or(""),
+        _ => return false,
+    };
+    if first != "assets" && first != "icons" {
+        return false;
+    }
+
+    let mut depth = 1;
+    for part in parts {
+        match part {
+            std::path::Component::Normal(_) => depth += 1,
+            _ => return false,
+        }
+    }
+
+    depth >= 2
+}
+
+fn zip_error(error: zip::result::ZipError) -> StoreError {
+    StoreError::Invalid(format!("zip: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::{Action, Key, Page};
+    use crate::profile::{Action, ImageSpec, Key, Page};
     use std::sync::atomic::{AtomicU32, Ordering};
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -299,5 +445,43 @@ mod tests {
             .collect();
         assert!(leftovers.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_and_import_round_trip() {
+        let dir = temp_dir("export");
+        let store = Store::new(&dir);
+        let mut profile = sample();
+        std::fs::create_dir_all(dir.join("assets")).expect("assets");
+        std::fs::write(dir.join("assets").join("pic.jpg"), b"fake image").expect("write");
+        profile.pages[0].keys.get_mut(&1).expect("key 1").image = Some(ImageSpec::File {
+            path: "assets/pic.jpg".into(),
+        });
+        store.save(&profile).expect("save");
+
+        let archive = dir.join("out.zip");
+        let count = store.export(&profile.name, &archive).expect("export");
+        assert_eq!(count, 1);
+
+        let other = temp_dir("import");
+        let store2 = Store::new(&other);
+        let imported = store2.import(&archive, Some("Copy")).expect("import");
+        assert_eq!(imported.name, "Copy");
+        assert!(other.join("assets").join("pic.jpg").exists());
+        assert!(store2.load("Copy").is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn only_asset_and_icon_paths_are_safe() {
+        assert!(safe_relative("assets/a.png"));
+        assert!(safe_relative("icons/mic.svg"));
+        assert!(!safe_relative("assets/../evil.png"));
+        assert!(!safe_relative("/assets/a.png"));
+        assert!(!safe_relative("other/a.png"));
+        assert!(!safe_relative("assets"));
+        assert!(!safe_relative("C:/assets/a.png"));
     }
 }
