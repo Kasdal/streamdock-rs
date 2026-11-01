@@ -222,7 +222,10 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if first_run {
-        log("first run: created the starter profile");
+        log(format!(
+            "first run: created profile {} with the tools pages",
+            profile.name
+        ));
         if let Some(icon) = &tray {
             icon.notify(
                 "Stream Dock",

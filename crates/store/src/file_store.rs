@@ -166,7 +166,7 @@ impl Store {
         match self.load(name) {
             Ok(profile) => Ok(profile),
             Err(StoreError::NotFound(_)) => {
-                let mut profile = Profile::starter();
+                let mut profile = Profile::tools();
                 profile.name = name.to_string();
                 self.save(&profile)?;
                 Ok(profile)

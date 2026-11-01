@@ -44,7 +44,7 @@ fn usage() {
     eprintln!("  pattern [--seconds N]");
     eprintln!("  probe --test strip-size|strip-span|image-limit");
     eprintln!("  bench [--count N] [--key 1..18]");
-    eprintln!("  profile <list|init|demo|show|validate|export|import> [--name N] [--dir PATH]");
+    eprintln!("  profile <list|init|demo|tools|show|validate|export|import> [--name N] [--dir PATH]");
     eprintln!("  preview [--name N] [--page N] [--out FILE] [--dir PATH]");
     eprintln!("  ui");
     eprintln!("  autostart <install|remove|status> [--profile N]");
@@ -650,6 +650,15 @@ fn profile_cmd(args: &[String]) -> Result<()> {
             profile.name = name.clone();
             store.save(&profile).map_err(map)?;
             println!("wrote {}", store.path_for(&name).map_err(map)?.display());
+            println!("run: streamdockd --profile {name}");
+        }
+        "tools" => {
+            let name = profile_name(args, "Default");
+            let mut profile = Profile::tools();
+            profile.name = name.clone();
+            store.save(&profile).map_err(map)?;
+            println!("wrote {}", store.path_for(&name).map_err(map)?.display());
+            println!("pages: Media, System, Apps, Tools");
             println!("run: streamdockd --profile {name}");
         }
         "export" => {

@@ -271,6 +271,52 @@ pub fn parse_color(text: &str) -> Result<[u8; 3], String> {
     }
 }
 
+/// A key with a bundled icon.
+fn icon_key(name: &str, actions: Vec<Action>) -> Key {
+    Key {
+        label: None,
+        image: Some(ImageSpec::Icon {
+            name: name.to_string(),
+            background: "#14375c".to_string(),
+        }),
+        actions,
+    }
+}
+
+/// A key with a text label.
+fn plain_key(label: &str, actions: Vec<Action>) -> Key {
+    Key {
+        label: Some(label.to_string()),
+        image: None,
+        actions,
+    }
+}
+
+/// One key combination.
+fn hotkey(keys: &[&str]) -> Action {
+    Action::Hotkey {
+        keys: keys.iter().map(|key| key.to_string()).collect(),
+    }
+}
+
+/// Add the four page keys to the bottom row of a page.
+fn add_navigation(page: &mut Page, _current: &str) {
+    let navigation = [
+        (11u8, "MEDIA", "Media"),
+        (12, "SYSTEM", "System"),
+        (13, "APPS", "Apps"),
+        (14, "TOOLS", "Tools"),
+    ];
+    for (key, label, target) in navigation {
+        page.keys.insert(
+            key,
+            plain_key(label, vec![Action::Page {
+                target: target.to_string(),
+            }]),
+        );
+    }
+}
+
 impl Profile {
     /// Find a page by name.
     pub fn page(&self, name: &str) -> Option<&Page> {
@@ -315,12 +361,200 @@ impl Profile {
         }
     }
 
+    /// The pages that a new install starts with: the tools that a Stream Deck
+    /// usually ships with.
+    ///
+    /// Media, System, Apps and Tools. The bottom row of every page switches
+    /// page, so a user never gets lost.
+    pub fn tools() -> Self {
+        let mut media = Page::new("Media");
+        media.keys.insert(
+            1,
+            icon_key("prev", vec![Action::Media {
+                command: MediaCommand::Previous,
+            }]),
+        );
+        media.keys.insert(
+            2,
+            icon_key("play", vec![Action::Media {
+                command: MediaCommand::PlayPause,
+            }]),
+        );
+        media.keys.insert(
+            3,
+            icon_key("next", vec![Action::Media {
+                command: MediaCommand::Next,
+            }]),
+        );
+        media.keys.insert(
+            4,
+            icon_key("stop", vec![Action::Media {
+                command: MediaCommand::Stop,
+            }]),
+        );
+        media.keys.insert(
+            5,
+            icon_key("mute", vec![Action::Media {
+                command: MediaCommand::Mute,
+            }]),
+        );
+        media.keys.insert(
+            6,
+            icon_key("volume-down", vec![Action::Media {
+                command: MediaCommand::VolumeDown,
+            }]),
+        );
+        media.keys.insert(
+            7,
+            icon_key("volume", vec![Action::Media {
+                command: MediaCommand::VolumeUp,
+            }]),
+        );
+        add_navigation(&mut media, "Media");
+
+        let mut system = Page::new("System");
+        system
+            .keys
+            .insert(1, icon_key("lock", vec![hotkey(&["win", "l"])]));
+        system
+            .keys
+            .insert(2, icon_key("screen", vec![hotkey(&["win", "d"])]));
+        system.keys.insert(
+            3,
+            icon_key("terminal", vec![hotkey(&["ctrl", "shift", "escape"])]),
+        );
+        system.keys.insert(
+            4,
+            icon_key("camera", vec![hotkey(&["win", "shift", "s"])]),
+        );
+        system
+            .keys
+            .insert(5, icon_key("copy", vec![hotkey(&["ctrl", "c"])]));
+        system
+            .keys
+            .insert(6, icon_key("paste", vec![hotkey(&["ctrl", "v"])]));
+        system
+            .keys
+            .insert(7, icon_key("undo", vec![hotkey(&["ctrl", "z"])]));
+        system
+            .keys
+            .insert(8, icon_key("redo", vec![hotkey(&["ctrl", "y"])]));
+        system
+            .keys
+            .insert(9, icon_key("save", vec![hotkey(&["ctrl", "s"])]));
+        system
+            .keys
+            .insert(10, icon_key("select", vec![hotkey(&["ctrl", "a"])]));
+        add_navigation(&mut system, "System");
+
+        let mut apps = Page::new("Apps");
+        apps.keys.insert(
+            1,
+            icon_key("folder", vec![Action::Launch {
+                target: "explorer.exe".into(),
+            }]),
+        );
+        apps.keys.insert(
+            2,
+            icon_key("edit", vec![Action::Launch {
+                target: "notepad.exe".into(),
+            }]),
+        );
+        apps.keys.insert(
+            3,
+            icon_key("calculator", vec![Action::Launch {
+                target: "calc.exe".into(),
+            }]),
+        );
+        apps.keys.insert(
+            4,
+            icon_key("brush", vec![Action::Launch {
+                target: "mspaint.exe".into(),
+            }]),
+        );
+        apps.keys.insert(
+            5,
+            icon_key("gear", vec![Action::Launch {
+                target: "ms-settings:".into(),
+            }]),
+        );
+        apps.keys.insert(
+            6,
+            icon_key("terminal", vec![Action::Launch {
+                target: "cmd.exe".into(),
+            }]),
+        );
+        apps.keys.insert(
+            7,
+            icon_key("browser", vec![Action::Launch {
+                target: "https://www.google.com".into(),
+            }]),
+        );
+        apps.keys.insert(
+            8,
+            icon_key("mail", vec![Action::Launch {
+                target: "mailto:".into(),
+            }]),
+        );
+        add_navigation(&mut apps, "Apps");
+
+        let mut tools = Page::new("Tools");
+        tools
+            .keys
+            .insert(1, icon_key("minus", vec![Action::Brightness { value: 30 }]));
+        tools
+            .keys
+            .insert(2, icon_key("plus", vec![Action::Brightness { value: 70 }]));
+        tools
+            .keys
+            .insert(3, icon_key("check", vec![Action::Brightness { value: 100 }]));
+        tools.keys.insert(
+            4,
+            icon_key("camera", vec![hotkey(&["win", "shift", "s"])]),
+        );
+        tools.keys.insert(
+            5,
+            plain_key(
+                "TYPE",
+                vec![Action::Text {
+                    text: "Hello from Stream Dock".into(),
+                    delay_ms: 20,
+                }],
+            ),
+        );
+        tools.keys.insert(
+            6,
+            plain_key(
+                "RUN 2",
+                vec![Action::Multi {
+                    actions: vec![
+                        Action::Text {
+                            text: "Stream Dock".into(),
+                            delay_ms: 20,
+                        },
+                        hotkey(&["enter"]),
+                    ],
+                    pause_ms: 300,
+                }],
+            ),
+        );
+        add_navigation(&mut tools, "Tools");
+
+        Self {
+            version: VERSION,
+            name: "Default".to_string(),
+            device: DeviceSpec::default(),
+            theme: Theme::default(),
+            apps: Vec::new(),
+            pages: vec![media, system, apps, tools],
+        }
+    }
+
     /// A two page demo: page Main switches to Second on key 1 and back again.
     ///
     /// Use it to check the daemon, the profile store and the action engine
     /// without the UI.
-    pub fn demo() -> Self {
-        let mut main = Page::new("Main");
+    pub fn demo() -> Self {        let mut main = Page::new("Main");
         for key in 1..=model::KEY_COUNT {
             let label = if key <= model::GRID_KEYS {
                 key.to_string()
@@ -759,6 +993,56 @@ mod tests {
         for key in 1..=model::KEY_COUNT {
             assert_eq!(page.keys[&key].label.as_deref(), Some(key.to_string().as_str()));
         }
+    }
+
+    #[test]
+    fn the_tools_profile_has_four_pages_and_is_valid() {
+        let profile = Profile::tools();
+        assert_eq!(profile.pages.len(), 4);
+        assert!(profile.validate().is_ok());
+
+        let names: Vec<&str> = profile.pages.iter().map(|page| page.name.as_str()).collect();
+        assert_eq!(names, vec!["Media", "System", "Apps", "Tools"]);
+
+        for page in &profile.pages {
+            for key in 11..=14u8 {
+                let config = page.keys.get(&key).expect("a navigation key");
+                assert!(matches!(config.actions.first(), Some(Action::Page { .. })));
+            }
+            for config in page.keys.values() {
+                for action in &config.actions {
+                    if let Action::Page { target } = action {
+                        assert!(
+                            profile.page_index(target).is_some(),
+                            "page {target} is missing"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_tools_profile_covers_the_usual_actions() {
+        let profile = Profile::tools();
+        let mut media = 0;
+        let mut hotkeys = 0;
+        let mut launches = 0;
+        for page in &profile.pages {
+            for config in page.keys.values() {
+                for action in &config.actions {
+                    match action {
+                        Action::Media { .. } => media += 1,
+                        Action::Hotkey { .. } => hotkeys += 1,
+                        Action::Launch { .. } => launches += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        assert_eq!(media, 7, "play, stop, mute, volume and track keys");
+        assert!(hotkeys >= 8, "system shortcuts");
+        assert!(launches >= 7, "app shortcuts");
     }
 
     #[test]

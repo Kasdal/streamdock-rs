@@ -1120,3 +1120,47 @@ Open work:
 2. Add a command line switch to the NSIS script for autostart on or off.
 3. Offer the setup exe next to the portable zip in `dist`.
 
+## 32. Session 2 part 14: preloaded tools profile
+
+Date: 2026-11-01. A new install now starts with the tools that a Stream Deck
+usually ships with, instead of empty numbered keys.
+
+Pages:
+
+| Page | Content |
+| --- | --- |
+| Media | previous, play/pause, next, stop, mute, volume down, volume up |
+| System | lock, show desktop, task manager, screenshot, copy, paste, undo, redo, save, select all |
+| Apps | Explorer, Notepad, Calculator, Paint, Settings, Command Prompt, browser, mail |
+| Tools | panel brightness 30/70/100, screenshot, a text demo, a two-step multi |
+
+Measured on hardware:
+
+| Test | Result |
+| --- | --- |
+| Media page | Mute, volume up and volume down worked |
+| Page switch | SYSTEM and APPS painted the right pages |
+| App launch | The pencil key opened Notepad |
+| First run | Created `Default` with the four pages and painted Media |
+
+Design notes:
+
+1. The bottom row of every page holds MEDIA, SYSTEM, APPS and TOOLS, so a page
+   switch is always in the same place.
+2. Tool keys use the bundled icons. Text labels are only used for the page
+   keys and the two demo keys on Tools.
+3. Every target is a normal profile value. The user can edit or delete a key
+   in the editor.
+4. `Profile::tools()` builds the profile in code, so a test checks it and the
+   first run and `streamdock profile tools` write the same content.
+5. 17 icons were added for this: browser, brush, calculator, copy, edit, grid,
+   lock, mail, paste, redo, save, screen, select, stop, terminal, undo, wrench.
+6. The first run log line names the page set, so support can see it.
+
+Open work:
+
+1. Let the user pick a preset on first run, for example Minimal, Media or Full.
+2. Add a gaming page and a streaming page as optional presets.
+3. Localize the page names.
+4. Make the browser and mail keys ask for a target instead of a fixed one.
+

@@ -34,7 +34,8 @@ It needs no C compiler, no vendor driver and no vendor software.
 | HTTP actions | tested against a local server |
 | Plugin host | tested with a PowerShell plugin |
 | Signed update check | verified with a local signed manifest |
-| Unit tests | 170 tests, no device needed |
+| Preloaded tools profile | verified on hardware: media, pages, Notepad |
+| Unit tests | 172 tests, no device needed |
 
 ## Device facts (measured)
 
@@ -300,6 +301,23 @@ is the fallback when no font can be loaded.
 A `command` action runs a program, so a profile with one needs an explicit opt
 in before a release build accepts it.
 
+## Starter profile
+
+A new install gets a `Default` profile with four pages. A first run writes it,
+and `streamdock profile tools` writes it again at any time. The bottom row of
+every page switches page.
+
+| Page | Keys |
+| --- | --- |
+| Media | previous, play/pause, next, stop, mute, volume down, volume up |
+| System | lock (Win+L), show desktop (Win+D), task manager, screenshot (Win+Shift+S), copy, paste, undo, redo, save, select all |
+| Apps | Explorer, Notepad, Calculator, Paint, Settings, Command Prompt, browser, mail |
+| Tools | panel brightness 30, 70 and 100, screenshot, a text demo, a two-step multi action |
+
+The app shortcuts use `explorer.exe`, `notepad.exe`, `calc.exe`,
+`mspaint.exe`, `ms-settings:`, `cmd.exe`, a web page and `mailto:`. Edit any
+key in the editor to change it.
+
 ## Plugins
 
 A plugin is a folder with a `manifest.json` and a program:
@@ -424,9 +442,10 @@ streamdock.exe send --hex 4352540000444953 --i-understand
 * `probe` answers one hardware question. See `handoff/HANDOFF.md`.
 * `bench` measures the image transfer rate.
 * `profile` lists, creates, shows and validates profiles. `profile demo`
-  writes a two page profile for a daemon test. `profile export` writes one
-  zip with the profile, its assets and its icons. `profile import` reads it
-  back, under a new name if you ask.
+  writes a two page profile for a daemon test. `profile tools` writes the four
+  page starter profile. `profile export` writes one zip with the profile, its
+  assets and its icons. `profile import` reads it back, under a new name if
+  you ask.
 * `preview` writes a picture of one page as a JPEG, without the panel.
 * `ui` opens the editor of the running daemon in the default browser.
 * `autostart` adds or removes the daemon in the per-user Run key.
