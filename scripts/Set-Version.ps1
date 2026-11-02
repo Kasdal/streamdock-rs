@@ -4,8 +4,11 @@
 
 .DESCRIPTION
     The version appears in the workspace manifest, the desktop manifest, the
-    Tauri config, the build scripts, the NSIS script and the README. This
-    script keeps them equal, so a release cannot ship two numbers.
+    Tauri config, the build scripts, the NSIS script and the local project
+    notes. This script keeps them equal, so a release cannot ship two numbers.
+
+    The local project notes are not in the repository, so that file is
+    optional: the check skips it when it is absent.
 
     Run it with -Check to compare the files and write nothing. The CI
     workflow runs that check on every push.
@@ -68,7 +71,8 @@ $targets = @(
         Patterns = @('(?<![\w.])(\d+\.\d+\.\d+)(?![\w.])')
     },
     @{
-        Path     = "README.md"
+        Path     = "ProjectData.md"
+        Optional = $true
         Patterns = @(
             'StreamDock-(\d+\.\d+\.\d+)',
             '"version": "(\d+\.\d+\.\d+)"'
@@ -106,6 +110,9 @@ $changed = 0
 foreach ($target in $targets) {
     $path = Join-Path $root $target.Path
     if (-not (Test-Path $path)) {
+        if ($target.Optional) {
+            continue
+        }
         throw "$($target.Path) is missing"
     }
 

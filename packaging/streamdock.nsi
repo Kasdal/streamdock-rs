@@ -59,9 +59,8 @@ Section "Install"
   !if /FileExists "${SRCDIR}\streamdock-desktop.exe"
     File "${SRCDIR}\streamdock-desktop.exe"
   !endif
-  File "${SRCDIR}\README.md"
   File "${SRCDIR}\LICENSE-Roboto.txt"
-  File "..\PRIVACY.md"
+  File "${SRCDIR}\PRIVACY.md"
 
   ; Stop a running daemon so the files can be replaced.
   nsExec::Exec 'taskkill /IM streamdockd.exe /F'
@@ -111,7 +110,6 @@ Section "Uninstall"
   Delete "$INSTDIR\streamdock.exe"
   Delete "$INSTDIR\streamdockd.exe"
   Delete "$INSTDIR\streamdock-desktop.exe"
-  Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\LICENSE-Roboto.txt"
   Delete "$INSTDIR\PRIVACY.md"
   Delete "$INSTDIR\uninstall.exe"

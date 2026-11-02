@@ -6,3 +6,6 @@
 *.gif
 dist/
 *.zip
+
+# Local project notes. Keep them out of the published repository.
+ProjectData.md

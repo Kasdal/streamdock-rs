@@ -3,7 +3,8 @@
 Date: 2026-11-01
 Author of this document: previous agent session (REA static analysis plus hardware tests).
 
-Read this file first. Then read `README.md`.
+Read this file first. Then read `ProjectData.md`.
+The file `ProjectData.md` is local only and is not in the repository.
 The file `installer-analysis.md` holds the static analysis of the vendor installer.
 Section 13 to 18 hold the plan for the full replacement product.
 
@@ -1795,5 +1796,39 @@ Push the repository first.
 resource in the PE file. A byte search finds no `FileDescription` string in
 the GNU or the MSVC build. The tray icon comes from the file at runtime. Fix
 the link step if a release must show a version in Explorer.
+
+## 44. Session 3 part 10: the notes left the repository
+
+Date: 2026-11-02. The user asked to rename `README.md` to `ProjectData.md`
+and to keep it out of git.
+
+### What changed
+
+| File | Change |
+| --- | --- |
+| `README.md` | renamed to `ProjectData.md` |
+| `.gitignore` | `ProjectData.md` added |
+| `ProjectData.md` | removed from the index, the file stays on disk |
+| `build-release.ps1` | no longer copies the notes into the package |
+| `packaging/install.ps1` | no longer copies the notes |
+| `packaging/streamdock.nsi` | no `File` or `Delete` line for the notes |
+| `scripts/Set-Version.ps1` | the notes are an optional target |
+
+### Why the build changed
+
+A fresh clone has no `ProjectData.md`, so the package and the installer must
+not need it. The portable zip and the setup still carry `PRIVACY.md` and
+`LICENSE-Roboto.txt`.
+
+### The version check
+
+`Set-Version.ps1` keeps the notes in its list with `Optional = $true`. When
+the file is absent the check skips it, so CI passes on a clone. When the file
+is present the check still catches a stale version in the install commands.
+
+### Trap for the next session
+
+Do not add a `README.md` reference to a build script, the installer or a
+workflow. Git does not carry that file to a clone or to a runner.
 
 
