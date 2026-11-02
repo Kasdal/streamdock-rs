@@ -18,6 +18,7 @@ foreach ($name in @(
     "streamdock.exe",
     "streamdockd.exe",
     "streamdock-desktop.exe",
+    "README.md",
     "PRIVACY.md",
     "LICENSE-Roboto.txt",
     "uninstall.ps1"

@@ -4,8 +4,9 @@
 
 .DESCRIPTION
     The version appears in the workspace manifest, the desktop manifest, the
-    Tauri config, the build scripts, the NSIS script and the local project
-    notes. This script keeps them equal, so a release cannot ship two numbers.
+    Tauri config, the build scripts, the NSIS script, the README and the local
+    project notes. This script keeps them equal, so a release cannot ship two
+    numbers.
 
     The local project notes are not in the repository, so that file is
     optional: the check skips it when it is absent.
@@ -69,6 +70,10 @@ $targets = @(
     @{
         Path     = "packaging\streamdock.nsi"
         Patterns = @('(?<![\w.])(\d+\.\d+\.\d+)(?![\w.])')
+    },
+    @{
+        Path     = "README.md"
+        Patterns = @('StreamDock-(\d+\.\d+\.\d+)')
     },
     @{
         Path     = "ProjectData.md"

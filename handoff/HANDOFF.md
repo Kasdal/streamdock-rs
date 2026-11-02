@@ -1828,7 +1828,45 @@ is present the check still catches a stale version in the install commands.
 
 ### Trap for the next session
 
-Do not add a `README.md` reference to a build script, the installer or a
+Do not add a `ProjectData.md` reference to a build script, the installer or a
 workflow. Git does not carry that file to a clone or to a runner.
+
+## 45. Session 3 part 11: a public README
+
+Date: 2026-11-02. The repository had no README after section 44. The user
+asked for a real one.
+
+### What it holds
+
+`README.md` is the public front page. It covers:
+
+| Section | Content |
+| --- | --- |
+| Features | keys, side display, profiles, actions, editor, tray |
+| Requirements | Windows 10 or 11, the device, WebView2 |
+| Install | the setup, the portable zip and the first start |
+| Use | the window, the side display, the tray, the browser editor |
+| Profiles | the JSON shape, the action types, export and import |
+| Command line | the common commands |
+| Data | the folders under `%LOCALAPPDATA%\StreamDock` |
+| Build | the three scripts and their output |
+| Layout | the crates and the workflows |
+| Limits, safety, privacy, licence | the short statements |
+
+The notes stay in `ProjectData.md`, which is still local only.
+
+### Package and version
+
+The public README goes back into the portable zip and the installer, because
+git carries it to a clone. `build-release.ps1`, `packaging\install.ps1` and
+`packaging\streamdock.nsi` name it again.
+
+`scripts\Set-Version.ps1` tracks the two build paths in the README as a
+required target, so the `dist\StreamDock-X.Y.Z` names stay correct.
+
+### Check
+
+The zip and the setup were built again with the README inside. The setup is
+7915512 bytes.
 
 

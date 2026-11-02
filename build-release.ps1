@@ -33,6 +33,7 @@ if (Test-Path $desktop) {
 } else {
     Write-Warning "streamdock-desktop.exe is missing. Build it with build-desktop.ps1."
 }
+Copy-Item "README.md" $dist
 Copy-Item "PRIVACY.md" $dist
 Copy-Item "crates\render\assets\Roboto-OFL.txt" (Join-Path $dist "LICENSE-Roboto.txt")
 Copy-Item "packaging\install.ps1", "packaging\uninstall.ps1", "packaging\sign.ps1" $dist
