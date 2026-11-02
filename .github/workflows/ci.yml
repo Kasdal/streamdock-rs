@@ -1,0 +1,63 @@
+name: CI
+
+# Build and test every change that is not a release. The release workflow
+# runs on main and repeats these steps with the new version.
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # The daemon embeds its icon and version with the Windows SDK resource
+      # compiler, and rustc needs link.exe. Both come from the MSVC tools.
+      - name: Load the MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache the build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: streamdock
+
+      - name: Check that every version file agrees
+        shell: pwsh
+        run: .\scripts\Set-Version.ps1 -Check
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      - name: Test
+        run: cargo test --release --workspace
+
+      - name: Build the desktop window
+        shell: pwsh
+        run: .\build-desktop.ps1
+
+      - name: Build the package
+        shell: pwsh
+        run: .\build-release.ps1
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamDock-package
+          path: |
+            dist/StreamDock-*/*.exe
+            dist/StreamDock-*.zip
+          if-no-files-found: error

@@ -1706,4 +1706,94 @@ again: `dist\StreamDock-0.3.1.zip` and `dist\StreamDock-0.3.1-setup.exe`,
 A route that the page calls cross-origin must not grow a new header without
 the preflight list. The test above covers the three names in use today.
 
+## 43. Session 3 part 9: GitHub Actions and semantic versions
+
+Date: 2026-11-02. The project had no `.github` folder. The user asked for a
+workflow that builds the app, plus automatic semantic versioning.
+
+### What was added
+
+| Path | Purpose |
+| --- | --- |
+| `.github/workflows/ci.yml` | build and test a pull request or a branch push |
+| `.github/workflows/release.yml` | bump, build, tag and publish on a push to `main` |
+| `scripts/Set-Version.ps1` | write one version into every file, or check them |
+| `scripts/Get-NextVersion.ps1` | pick the next version from the commit messages |
+
+### One version in nine files
+
+The version lived in nine files. `Set-Version.ps1` holds the list and the
+pattern for each one. It reads the version from `Cargo.toml` and writes the
+same value everywhere:
+
+| File | What carries the version |
+| --- | --- |
+| `Cargo.toml` | workspace package |
+| `crates/desktop/Cargo.toml` | the window crate, outside the workspace |
+| `crates/desktop/tauri.conf.json` | the window version |
+| `build-release.ps1`, `build-nsis.ps1` | default parameter |
+| `packaging/install.ps1`, `sign.ps1` | default parameter |
+| `packaging/streamdock.nsi` | the define and the two example commands |
+| `README.md` | the update manifest example and the install commands |
+
+`-Check` compares the files and writes nothing. The CI workflow runs it, so a
+release cannot ship two numbers.
+
+### How the bump is chosen
+
+`Get-NextVersion.ps1` reads the commits after the last `vX.Y.Z` tag and maps
+the subject lines:
+
+| Subject | Bump |
+| --- | --- |
+| `feat:` | minor |
+| `fix:`, `perf:`, `revert:` | patch |
+| any type with `!`, or a `BREAKING CHANGE:` footer | major |
+| `docs:`, `chore:`, `ci:`, `test:`, `style:`, `build:` | none |
+| any other message | patch |
+
+A plain message counts as a patch on purpose: the older commits in this
+repository do not use the conventional form, and they must still release.
+
+`[release:major]`, `[release:minor]` and `[release:patch]` force a bump.
+`[skip release]` in the newest commit stops the release for that push only,
+so an old marker cannot block later releases.
+
+When no tag exists the script uses the push range, so the first release counts
+only the commits of that push, not the whole history.
+
+### The release flow
+
+1. Read the version, skip the run when no commit asks for a release.
+2. Write the version into every file.
+3. Build the workspace, run the tests.
+4. Build the window, the zip and the installer.
+5. Commit `chore(release): vX.Y.Z`, tag `vX.Y.Z`, push both.
+6. Create the GitHub release with the zip, the setup and the three exes.
+
+The build runs before the commit, so a failed build leaves no bump behind.
+
+### Toolchain
+
+The workflows use MSVC on `windows-latest`, with `ilammy/msvc-dev-cmd` for
+`link.exe` and `rc.exe`. The local build stays on GNU. Both were checked: the
+whole workspace builds with the MSVC target.
+
+### Trap for the next session
+
+The workflow pushes the bump commit to `main`. If `main` is protected, the
+GitHub Actions bot needs a bypass rule, or the push fails after a successful
+build.
+
+The repository has no git remote yet, so the workflows have not run on GitHub.
+Push the repository first.
+
+### Known gap, not fixed here
+
+`winres` writes `resource.o` and links `libresource.a`, but neither
+`streamdockd.exe` nor `streamdock.exe` carries the icon or the version
+resource in the PE file. A byte search finds no `FileDescription` string in
+the GNU or the MSVC build. The tray icon comes from the file at runtime. Fix
+the link step if a release must show a version in Explorer.
+
 

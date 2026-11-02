@@ -1,0 +1,132 @@
+name: Release
+
+# On every push to main this workflow reads the commit messages, picks the
+# next semantic version, writes it into every file, builds, tags, and
+# publishes a GitHub release. A push that changes only docs, tests or CI
+# makes no release. Start it by hand to force a bump.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+        default: auto
+
+permissions:
+  contents: write
+
+# Two runs must never bump the same version at the same time.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Version, build and publish
+    runs-on: windows-latest
+    # The bump commit is the output of this workflow, so it must not start
+    # another run. GitHub does not trigger workflows from GITHUB_TOKEN
+    # pushes, and this guard covers a token that does.
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+    steps:
+      - name: Check out with the full history and the tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Load the MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache the build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: streamdock
+
+      - name: Work out the next version
+        id: version
+        shell: pwsh
+        run: |
+          $bump = "${{ inputs.bump }}"
+          if (-not $bump) {
+            $bump = "auto"
+          }
+          $before = "${{ github.event.before }}"
+          $next = & "$PWD\scripts\Get-NextVersion.ps1" -From $before -Bump $bump
+          if (-not $next) {
+            Write-Host "This push does not ask for a release."
+            "skip=true" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          Write-Host "Next version: $next"
+          "skip=false" >> $env:GITHUB_OUTPUT
+          "version=$next" >> $env:GITHUB_OUTPUT
+
+      - name: Write the version into every file
+        if: steps.version.outputs.skip == 'false'
+        shell: pwsh
+        run: .\scripts\Set-Version.ps1 ${{ steps.version.outputs.version }}
+
+      - name: Build
+        if: steps.version.outputs.skip == 'false'
+        run: cargo build --release --workspace
+
+      - name: Test
+        if: steps.version.outputs.skip == 'false'
+        run: cargo test --release --workspace
+
+      - name: Build the desktop window
+        if: steps.version.outputs.skip == 'false'
+        shell: pwsh
+        run: .\build-desktop.ps1
+
+      - name: Build the package
+        if: steps.version.outputs.skip == 'false'
+        shell: pwsh
+        run: .\build-release.ps1 -Version ${{ steps.version.outputs.version }}
+
+      - name: Build the installer
+        if: steps.version.outputs.skip == 'false'
+        shell: pwsh
+        run: |
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            choco install nsis -y --no-progress
+          }
+          .\build-nsis.ps1 -Version ${{ steps.version.outputs.version }}
+
+      - name: Commit the bump and tag it
+        if: steps.version.outputs.skip == 'false'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(release): v${{ steps.version.outputs.version }}"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "HEAD:${{ github.ref_name }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Publish the release
+        if: steps.version.outputs.skip == 'false'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          gh release create "v$version" `
+            "dist\StreamDock-$version.zip" `
+            "dist\StreamDock-$version-setup.exe" `
+            "dist\StreamDock-$version\streamdock.exe" `
+            "dist\StreamDock-$version\streamdockd.exe" `
+            "dist\StreamDock-$version\streamdock-desktop.exe" `
+            --title "Stream Dock $version" `
+            --generate-notes

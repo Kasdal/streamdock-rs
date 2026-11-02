@@ -128,6 +128,8 @@ page paints keys 1 to 15 only.
 | `crates/ipc` | loopback HTTP server, token, editor page (`streamdock-ipc`) |
 | `crates/daemon` | the `streamdockd` binary |
 | `crates/cli` | the `streamdock` binary |
+| `scripts` | version scripts for the release workflow |
+| `.github/workflows` | CI and release pipelines |
 | `handoff/HANDOFF.md` | session record and the product plan |
 | `installer-analysis.md` | static analysis of the vendor installer |
 
@@ -385,7 +387,7 @@ code runs inside the daemon. Plugins live in `<profiles>\plugins\<id>`.
 downloads nothing.
 
 ```json
-{ "version": "0.3.0", "url": "https://example/StreamDock-0.3.1.zip",
+{ "version": "0.3.1", "url": "https://example/StreamDock-0.3.1.zip",
   "sha256": "…", "notes": "Faster paint" }
 ```
 
@@ -487,6 +489,52 @@ cargo test --release
 
 Cargo writes its progress to stderr, so PowerShell reports exit code 1.
 Read the `Finished` line.
+
+## Continuous integration
+
+Two GitHub Actions workflows build the project on `windows-latest`:
+
+| Workflow | When | What it does |
+| --- | --- | --- |
+| `CI` | pull request, push to another branch | build, test, package, upload the zip |
+| `Release` | push to `main`, or manual | bump the version, build, tag, publish |
+
+Both use the MSVC toolchain from the runner image. The desktop window needs it,
+and the daemon builds with it too.
+
+## Versioning
+
+The version lives in one place per file, and `scripts\Set-Version.ps1` writes
+it into all of them. Run the check before a commit:
+
+```powershell
+.\scripts\Set-Version.ps1 -Check
+```
+
+The `Release` workflow reads the commits after the last `vX.Y.Z` tag and picks
+the bump:
+
+| Commit message | Bump |
+| --- | --- |
+| `feat: ...` | minor |
+| `fix: ...`, `perf: ...`, `revert: ...` | patch |
+| any type with `!`, or a `BREAKING CHANGE:` footer | major |
+| `docs: ...`, `chore: ...`, `ci: ...`, `test: ...`, `style: ...`, `build: ...` | none |
+| any other message | patch |
+
+A message can force a bump with `[release:major]`, `[release:minor]` or
+`[release:patch]`. `[skip release]` in the newest commit stops a release for
+that push only. A manual run can also pick `patch`, `minor` or `major` in the
+dialog.
+
+A release writes the new version into every file, commits it as
+`chore(release): vX.Y.Z`, tags it, builds the zip and the installer, and
+publishes both on the release page. The bump commit does not start another
+release.
+
+The workflow pushes the bump commit to `main`, so branch protection must allow
+the GitHub Actions bot to push. Give the bot a bypass rule when `main` is
+protected.
 
 ## Commands
 
