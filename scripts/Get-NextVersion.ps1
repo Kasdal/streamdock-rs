@@ -62,6 +62,7 @@ try {
     # release, when the repository has no tag yet. `git tag` stays quiet when
     # the list is empty, unlike `git describe`.
     $range = "HEAD"
+    $single = $false
     $tag = & git tag --list "v[0-9]*" --sort=-v:refname | Select-Object -First 1
     if ($tag) {
         $range = "$tag..HEAD"
@@ -70,14 +71,22 @@ try {
         $range = "$From..HEAD"
         Write-Host "commits since $From"
     } else {
+        $single = $true
         Write-Host "no tag and no start point, so only the last commit counts"
     }
 
-    $subjects = & git log --format=%s $range
+    # `git log HEAD` lists the whole history, so a single commit needs -1.
+    $logArgs = @()
+    if ($single) {
+        $logArgs += "-1"
+    }
+    $logArgs += $range
+
+    $subjects = & git log --format=%s @logArgs
     if ($LASTEXITCODE -ne 0) {
         throw "git log failed for $range"
     }
-    $bodies = & git log --format=%b $range
+    $bodies = & git log --format=%b @logArgs
     $text = ($subjects + $bodies) -join "`n"
     # The skip marker belongs to one push, so only the newest commit counts.
     $newest = & git log -1 --format=%B $range
