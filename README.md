@@ -1,5 +1,7 @@
 # Stream Dock
 
+<img width="1383" height="926" alt="Image" src="https://github.com/user-attachments/assets/e3d5af0f-6ae9-43ac-a65e-224ede3ea96e" />
+
 Stream Dock controls the AJAZZ AKP-153E keypad on Windows. It uses the Win32
 HID API. It needs no vendor driver and no vendor software.
 
