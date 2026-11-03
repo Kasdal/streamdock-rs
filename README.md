@@ -224,8 +224,8 @@ Build the window, the portable package and the installer:
 | Script | Output |
 | --- | --- |
 | `build-desktop.ps1` | `crates\desktop\target\x86_64-pc-windows-msvc\release\streamdock-desktop.exe` |
-| `build-release.ps1` | `dist\StreamDock-0.3.1.zip` |
-| `build-nsis.ps1` | `dist\StreamDock-0.3.1-setup.exe` |
+| `build-release.ps1` | `dist\StreamDock-0.3.2.zip` |
+| `build-nsis.ps1` | `dist\StreamDock-0.3.2-setup.exe` |
 
 `build-nsis.ps1` needs `makensis`. Install NSIS, or pass `-MakensisPath PATH`.
 
