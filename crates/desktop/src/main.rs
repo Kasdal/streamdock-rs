@@ -96,7 +96,7 @@ fn main() {
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &reload, &quit])?;
 
-            let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
+            let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.ico"))?;
             TrayIconBuilder::with_id("editor")
                 .icon(icon)
                 .tooltip("Stream Dock editor")
